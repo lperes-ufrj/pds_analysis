@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-time_windows=(20 30)
-coincidence_thresholds=(10000 8000 6000 5000 4000)
-save_thresholds=(4000 3000 2000)
+time_windows=(50)
+coincidence_thresholds=(1000 2000 3000)
+save_thresholds=(1000 2000 3000 4000)
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 binary="${script_dir}/coincidence_cuts"

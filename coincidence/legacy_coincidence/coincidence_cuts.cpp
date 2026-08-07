@@ -21,6 +21,7 @@ namespace {
 constexpr int DEFAULT_COINCIDENCE_WINDOW_TICKS = 20;
 constexpr double DEFAULT_COINCIDENCE_THRESHOLD_ADC = 8000.0;
 constexpr double DEFAULT_SAVE_THRESHOLD_ADC = 3000.0;
+constexpr double MAX_WAVEFORM_AMPLITUDE = 16383.0;
 
 // The first eight channels form the two sides of the coincidence test. The
 // remaining four channels contain the waveforms written to the output tree.
@@ -56,6 +57,7 @@ struct WaveformRecord {
     Long64_t timestamp = 0;
     std::vector<short> adc;
     double amplitude = 0.0;
+    bool is_saturated = false;
     int peak_tick = 0;
 };
 
@@ -182,7 +184,7 @@ Args parse_args(int argc, char **argv)
     if (args.output.empty()) {
         // Encode the selection settings in the default output name so scans
         // with different thresholds do not overwrite one another.
-        args.output = "coincident_waveforms_fast_window_" +
+        args.output = "coincident_wfs_m7_m8_window_" +
                       std::to_string(args.coincidence_window_ticks) +
                       "_ticks_coinc_adc_" +
                       format_double(args.coincidence_threshold_adc) +
@@ -199,7 +201,7 @@ double signal_amplitude(const std::vector<short> &waveform)
     // Restrict the measurement to the expected signal region [30, 130). The
     // min/max bounds also make short waveforms safe to process.
     const std::size_t begin = std::min<std::size_t>(30, waveform.size());
-    const std::size_t end = std::min<std::size_t>(130, waveform.size());
+    const std::size_t end = std::min<std::size_t>(200, waveform.size());
     if (begin >= end) {
         return 0.0;
     }
@@ -213,7 +215,7 @@ int signal_peak_tick(const std::vector<short> &waveform)
 {
     // Use the maximum ADC sample in the signal region as the peak position.
     const std::size_t begin = std::min<std::size_t>(30, waveform.size());
-    const std::size_t end = std::min<std::size_t>(130, waveform.size());
+    const std::size_t end = std::min<std::size_t>(200, waveform.size());
     if (begin >= end) {
         return static_cast<int>(begin);
     }
@@ -361,6 +363,7 @@ int main(int argc, char **argv)
         record.timestamp = static_cast<Long64_t>(timestamp);
         record.adc = *adc;
         record.amplitude = signal_amplitude(record.adc);
+        record.is_saturated = record.amplitude >= MAX_WAVEFORM_AMPLITUDE;
         record.peak_tick = signal_peak_tick(record.adc);
 
         events.insert(record.event);
@@ -396,6 +399,8 @@ int main(int argc, char **argv)
     Int_t coincidence_right_channel = 0;
     Long64_t coincidence_left_waveform_index = 0;
     Long64_t coincidence_right_waveform_index = 0;
+    Bool_t coincidence_left_is_saturated = false;
+    Bool_t coincidence_right_is_saturated = false;
     Long64_t coincidence_left_timestamp = 0;
     Long64_t coincidence_right_timestamp = 0;
     Long64_t dt_timestamp_ticks = 0;
@@ -404,6 +409,7 @@ int main(int argc, char **argv)
     Long64_t saved_waveform_index = 0;
     Long64_t saved_timestamp = 0;
     Double_t saved_amplitude = 0.0;
+    Bool_t saved_is_saturated = false;
     Int_t saved_peak_tick = 0;
     Int_t dt_peak_ticks_save = 0;
     std::vector<double> adc_vec;
@@ -420,6 +426,12 @@ int main(int argc, char **argv)
     out_tree.Branch("coincidence_right_waveform_index",
                     &coincidence_right_waveform_index,
                     "coincidence_right_waveform_index/L");
+    out_tree.Branch("coincidence_left_is_saturated",
+                    &coincidence_left_is_saturated,
+                    "coincidence_left_is_saturated/O");
+    out_tree.Branch("coincidence_right_is_saturated",
+                    &coincidence_right_is_saturated,
+                    "coincidence_right_is_saturated/O");
     out_tree.Branch("coincidence_left_timestamp", &coincidence_left_timestamp,
                     "coincidence_left_timestamp/L");
     out_tree.Branch("coincidence_right_timestamp", &coincidence_right_timestamp,
@@ -433,6 +445,8 @@ int main(int argc, char **argv)
                     "saved_waveform_index/L");
     out_tree.Branch("saved_timestamp", &saved_timestamp, "saved_timestamp/L");
     out_tree.Branch("saved_amplitude", &saved_amplitude, "saved_amplitude/D");
+    out_tree.Branch("saved_is_saturated", &saved_is_saturated,
+                    "saved_is_saturated/O");
     out_tree.Branch("saved_peak_tick", &saved_peak_tick, "saved_peak_tick/I");
     out_tree.Branch("dt_peak_ticks_save", &dt_peak_ticks_save,
                     "dt_peak_ticks_save/I");
@@ -495,6 +509,10 @@ int main(int argc, char **argv)
                             records[i_left].waveform_index;
                         coincidence_right_waveform_index =
                             records[i_right].waveform_index;
+                        coincidence_left_is_saturated =
+                            records[i_left].is_saturated;
+                        coincidence_right_is_saturated =
+                            records[i_right].is_saturated;
                         coincidence_left_timestamp = records[i_left].timestamp;
                         coincidence_right_timestamp = records[i_right].timestamp;
                         dt_timestamp_ticks =
@@ -527,6 +545,7 @@ int main(int argc, char **argv)
                                 saved_waveform_index = saved.waveform_index;
                                 saved_timestamp = saved.timestamp;
                                 saved_amplitude = saved.amplitude;
+                                saved_is_saturated = saved.is_saturated;
                                 saved_peak_tick = saved.peak_tick;
                                 dt_peak_ticks_save =
                                     saved.peak_tick - reference_peak_tick;

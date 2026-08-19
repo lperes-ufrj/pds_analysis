@@ -1,26 +1,25 @@
 import uproot
 import numpy as np
-import matplotlib.pyplot as plt        
+import matplotlib.pyplot as plt
 from iminuit import Minuit
 from iminuit.cost import LeastSquares
-import aux.functions as fc     
-import os        
+from calib.aux import functions as fc
+from calib.aux import paths
+
+CALIB_DIR = paths.CALIB_DIR
 
 def fit_multigauss(f, run):
-# iterate over all channels
-    mean_spe = []
-    std_spe = []
+    results = {}   # {channel: Minuit object}
 
-    # create folder if not exists
-
-    os.makedirs(f"PLOTS/fingerplot/{run}/", exist_ok=True)
-    os.makedirs(f"PLOTS/multigauss/{run}/", exist_ok=True)
-
-    minuit_results = []
+    fp_dir = paths.out(CALIB_DIR, "plots", "fingerplot", run)
+    mg_dir = paths.out(CALIB_DIR, "plots", "multigauss", run)
 
     keys = fc.latest_cycle_keys(f)
 
     for key in keys:
+        # key like "Metrics_2070;1"
+        channel = int(key.split("_")[1].split(";")[0])
+
         integral = f[key]["integral"].array(library="np")
 
         # Raw fingerplot
@@ -29,14 +28,14 @@ def fit_multigauss(f, run):
         plt.title(f"{key} - Fingerplot")
         plt.xlabel("Integral")
         plt.ylabel("Counts")
-        plt.savefig(f"PLOTS/fingerplot/{run}/{key}_fingerplot.png")
+        plt.savefig(fp_dir / f"{key}_fingerplot.png")
         plt.close()
 
         # Multigauss fingerplot
-        counts, edges = np.histogram(integral, bins=x_bin)   
+        counts, edges = np.histogram(integral, bins=x_bin)
         centers = (edges[:-1] + edges[1:]) / 2
         y_err = np.sqrt(counts)
-        y_err[y_err == 0] = 1                                  
+        y_err[y_err == 0] = 1
 
         model = LeastSquares(centers, counts, y_err, fc.multi_gauss)
 
@@ -53,16 +52,13 @@ def fit_multigauss(f, run):
         "A3": 20 ,
         }
 
-        # minuit fit
         m = Minuit(model, **initial_guesses)
 
-        # keep the fit from wandering into unphysical local minima
         for a in ("A0", "A1", "A2", "A3"):
             m.limits[a] = (0, None)
         for s in ("sigma0", "sigma1", "sigma2", "sigma3"):
             m.limits[s] = (0, 50)
 
-        m.interactive()
         m.migrad()
         m.hesse()
 
@@ -70,10 +66,10 @@ def fit_multigauss(f, run):
         x_curve = np.linspace(centers[0], centers[-1], 500)
         y_curve = fc.multi_gauss(x_curve, *m.values)
 
-        spe      = m.values["gain"]         
-        spe_err  = m.errors["gain"]          
-        ndf      = len(centers) - m.nfit    
-        chi2_ndf = m.fval / ndf              
+        spe      = m.values["gain"]
+        spe_err  = m.errors["gain"]
+        ndf      = len(centers) - m.nfit
+        chi2_ndf = m.fval / ndf
 
         label_fit = (f"multigauss fit\n"
                     f"SPE = {spe:.1f} ± {spe_err:.1f}\n"
@@ -85,30 +81,16 @@ def fit_multigauss(f, run):
         plt.xlabel("Integral")
         plt.ylabel("Counts")
         plt.legend()
-        plt.savefig(f"PLOTS/multigauss/{run}/{key}_multigauss.png")
+        plt.savefig(mg_dir / f"{key}_multigauss.png")
         plt.close()
 
-        # # crosstalk trial
-        # integrals = np.array([fc.gaussian_integral(m.values[f"sigma{i}"]) for i in range(6)])
-        # total_int_gauss = np.sum(integrals)
-
-        # K_prob = integrals / total_int_gauss
-        # x_ct = np.arange(6)
-
-        # plt.plot(x_ct, K_prob, "*")
-        # plt.savefig(f"PLOTS/ct/trial_ct_{f.keys()[i]}.png")
-        # plt.close()
-
-        print(f"{key}: Multigauss Fitted")
-        print(f"Nsamples = {len(integral)}")
-        print(rf"SPE = {spe:.1f} +/- {spe_err:.1f}")
-        print(rf"chi^2/ndf = {spe:.1f}")
-        print(f"Fit Valid: {m.valid}")
+        print(f"Channel {channel}: Multigauss Fitted")
+        print(f"  Nsamples = {len(integral)}")
+        print(f"  SPE = {spe:.1f} +/- {spe_err:.1f}")
+        print(f"  chi^2/ndf = {chi2_ndf:.2f}")
+        print(f"  Fit Valid: {m.valid}")
         print()
 
-        mean_spe.append(spe)
-        std_spe.append(spe_err)
-        minuit_results.append(m)
+        results[channel] = m
 
-    return mean_spe, std_spe, minuit_results
-
+    return results

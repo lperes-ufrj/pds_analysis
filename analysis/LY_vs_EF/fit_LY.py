@@ -1,5 +1,11 @@
+"""Fit relative LY for one channel using errors on the mean waveform.
+
+Usage: python analysis/LY_vs_EF/fit_LY_one_ch.py SAMPLE_LABEL CHANNEL
+Sample errors are assumed uncorrelated. Template charge is treated as exact.
+"""
 from pathlib import Path
 from collections import defaultdict
+import sys
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
@@ -11,10 +17,24 @@ import time
 import dunestyle.matplotlib as dunestyle
 
 
-sample_label = '20260829_094702'
-script_dir = Path(__file__).resolve().parent
+import matplotlib.pyplot as plt
+from matplotlib.ticker import AutoMinorLocator
+from iminuit import Minuit
+from iminuit.cost import LeastSquares
+
+
+
+repo_dir = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(repo_dir))
+from src.src import calc_integral_and_error,read_txt_error_file
+
+
+SAMPLE_LABELS = ['20260909_213507','20260909_125014']
+CHANNELS = [2050,2051,2060,2061,2080,2081]
+script_dir = Path(__file__).resolve().parent.parent
+#print(f"Script directory: {script_dir}")
 repo_dir = script_dir.parent
-path_templates = repo_dir / "filter/templates_large_pulses"
+path_templates = "../" / repo_dir / "filter/templates_large_pulses"
 
 templates_ch_1010_charge = np.trapezoid(np.loadtxt(path_templates / "template_42228_C1_1.txt"))
 templates_ch_1011_charge = np.trapezoid(np.loadtxt(path_templates / "template_42228_C1_2.txt"))
@@ -87,9 +107,6 @@ list_templates_charge = {
 }
 
 
-path_waveforms = (
-    repo_dir / "coincidence/selected_waveforms" / sample_label
-)
 
 run_to_efield = {
     # Zero-field reference
@@ -122,6 +139,18 @@ run_to_efield = {
     39506: 0.171429,   
     39507: 0.114286,    
     39508: 0.057143,
+
+    # Higher HV scan
+    43380: 0.685,
+    43381: 0.685,
+    43383: 0.586,
+    43384: 0.586,
+    43386: 0.771,
+    43387: 0.771,
+    43389: 0.44,
+    43390: 0.44,
+    41523: 0.834,
+    
 }
 
 E = [
@@ -185,393 +214,330 @@ efield_previous = np.array([
 ])
 
 
-def Calc_Charge(waveform, template_charge):
-    return np.trapezoid(waveform[50:500]) / template_charge
+def Calc_Rel_LY(charge, template_charge):
+    return charge / template_charge
 
 
-def calculate_study_XA(csv_suffix, channels):
+def LArQL(E_D, B_1, k_e, B_2, E_0):
+    E_D = np.abs(np.asarray(E_D, dtype=float))
+    return 1.0 - B_1 * E_D / (E_D + k_e) + B_2 * (-np.expm1(-E_D / E_0))
+
+def Birks(E, B_1, k):
+    E = np.asarray(E, dtype=float)
+    return 1.0 - B_1 * E / (E + k)
+
+
+def calculate_study_XA(csv_suffix, channel, y_err_runs,path_waveforms):
     csv_files = sorted(
-        path_waveforms.glob(f"channel_*run*{csv_suffix}")
+        path_waveforms.glob(f"channel_*run*{csv_suffix}.csv")
     )
 
-    print(csv_files)
-    reference_charge = {}
-    charge_records = []
+    
+    reference_charge_lower = {}
+    reference_charge_central = {}
+    reference_charge_upper = {}
 
+    charge_records = []
+    ch_found = 0
     for csv_file in csv_files:
-        match = re.search(r"channel_(\d+)_run_(\d+)", csv_file.name)
+        match = re.search( r"channel_(\d+)_coincidence_scan_run_(\d+)", csv_file.name)
+        
         if not match:
             continue
+        #print(f"Processing file: {csv_file.name}")
+        ch = int(match.group(1))
+        if ch != channel:
+            continue
 
-        channel = int(match.group(1))
+        ch_found+=1
         run = int(match.group(2))
 
         if run not in run_to_efield:
             print(f"Run {run:06d} has no electric-field mapping. Skipping.")
             continue
-        if channel not in list_templates_charge:
-            raise KeyError(f"Channel {channel} has no charge template")
+        if ch not in list_templates_charge:
+            raise KeyError(f"Channel {ch} has no charge template")
 
         mean_waveform = pd.read_csv(csv_file)["mean"].to_numpy()
-        charge = Calc_Charge(mean_waveform, list_templates_charge[channel])
-        charge_records.append((run, channel, charge))
+        charge_lower, charge_central, charge_upper = calc_integral_and_error(mean_waveform,y_err_runs[run][ch])
+        ly_central = Calc_Rel_LY(charge_central, list_templates_charge[ch])
+        ly_err_up = Calc_Rel_LY(charge_upper, list_templates_charge[ch]) 
+        ly_err_low = Calc_Rel_LY(charge_lower, list_templates_charge[ch])
+        
+        charge_records.append((run, ch, ly_err_low, ly_central, ly_err_up))
+
         if run == 39510:
-            reference_charge[channel] = charge
+            reference_charge_central[ch] = ly_central
+            reference_charge_lower[ch] = ly_err_up
+            reference_charge_upper[ch] = ly_err_low
 
-    missing_references = channels.difference(reference_charge)
-    if missing_references:
-        raise RuntimeError(
-            f"Missing run 039510 reference for channels {sorted(missing_references)}"
+    references = len(reference_charge_central)
+    #print(references)
+    if not references:
+        print(
+            f"Missing run 039510 reference for channels {sorted(reference_charge_central.keys())}"
         )
 
-    points_by_efield = defaultdict(list)
-    for run, channel, charge in charge_records:
-        points_by_efield[run_to_efield[run]].append(
-            charge / reference_charge[channel]
+    points_by_efield_central = defaultdict(list)
+    points_by_efield_err_up = defaultdict(list)
+    points_by_efield_err_low = defaultdict(list)
+    for run, channel, ly_err_low, ly_central, ly_err_up in charge_records:
+        points_by_efield_central[run_to_efield[run]].append(
+            ly_central / reference_charge_central[channel]
+        )
+        points_by_efield_err_up[run_to_efield[run]].append(
+            ly_err_up / reference_charge_central[channel]
+        )
+        points_by_efield_err_low[run_to_efield[run]].append(
+            ly_err_low / reference_charge_central[channel]
         )
 
-    efields = np.asarray(sorted(points_by_efield), dtype=float)
-    means = np.asarray(
-        [np.mean(points_by_efield[efield]) for efield in efields],
+    efields = np.asarray(sorted(points_by_efield_central), dtype=float)
+   # print(f"Points HV: {points_by_efield_central}")
+
+    means_rel_ly_central = np.asarray(
+        [np.mean(points_by_efield_central[efield]) for efield in efields],
         dtype=float,
     )
-    return efields, means
+    means_rel_ly_err_up = np.asarray(
+        [np.mean(points_by_efield_err_up[efield]) for efield in efields],
+        dtype=float,
+    )
+    means_rel_ly_err_low = np.asarray(
+        [np.mean(points_by_efield_err_low[efield]) for efield in efields],
+        dtype=float,
+    )
+    return efields, means_rel_ly_central, means_rel_ly_err_up, means_rel_ly_err_low, ch_found
 
-def calculate_study_mean_all(datasets):
-    reference_run = 39510
-    reference_charge = {}
-    charge_records = []
-    requested_channels = set()
 
-    for dataset in datasets:
-        csv_suffix = dataset["csv_suffix"]
-        channels = set(dataset["channels"])
-        requested_channels.update(channels)
 
-        csv_files = sorted(
-            path_waveforms.glob(f"channel_*run*{csv_suffix}")
+
+def main() -> None:
+
+    mean_rel_ly = []
+    mean_rel_ly_err_up = []
+    mean_rel_ly_err_low = []
+    efields = None
+        
+    for sample_label in SAMPLE_LABELS:
+        
+        path_waveforms = (
+        repo_dir / "coincidence/selected_waveforms" / sample_label
         )
+        #print(f"Path to waveforms: {path_waveforms}")
 
-        for csv_file in csv_files:
-            match = re.search(
-                r"channel_(\d+).*?run_?(\d+)",
-                csv_file.name,
-            )
-            if not match:
+        for ch in CHANNELS:
+            y_err = read_txt_error_file(sample_label, ch)
+            #print(f"y_err: {y_err}")
+           # print(f"Channel {ch}:")
+            current_efields, rel_ly, rel_ly_err_up, rel_ly_err_low, ch_found  = calculate_study_XA(sample_label, ch, y_err,path_waveforms)
+           # print(f"***********************************")
+            if ch_found == 0:
+                print(f"No data found for channel {ch} in sample {sample_label}. Skipping.")
                 continue
 
-            channel = int(match.group(1))
-            run = int(match.group(2))
-
-            if channel not in channels:
+            if rel_ly.size == 0:
+                print(f"No data found for channel {ch} in sample {sample_label}. Skipping.")
                 continue
 
-            if run not in run_to_efield:
-                print(
-                    f"Run {run:06d} has no electric-field mapping. "
-                    "Skipping."
+            if efields is None:
+                efields = current_efields.copy()
+            elif (
+                current_efields.shape != efields.shape
+                or not np.allclose(current_efields, efields)
+            ):
+                raise ValueError(
+                    f"Electric-field values differ for channel {ch}, sample {sample_label}"
                 )
-                continue
 
-            if channel not in list_templates_charge:
-                raise KeyError(
-                    f"Channel {channel} has no charge template"
-                )
+            mean_rel_ly.append(rel_ly)
+            mean_rel_ly_err_up.append(rel_ly_err_up)
+            mean_rel_ly_err_low.append(rel_ly_err_low)
 
-            mean_waveform = pd.read_csv(csv_file)["mean"].to_numpy()
+            #print(rel_ly, rel_ly_err_up, rel_ly_err_low)
+    mean_rel_ly = np.mean(np.array(mean_rel_ly), axis=0)
+    mean_rel_ly_err_up = np.mean(np.array(mean_rel_ly_err_up), axis=0)
+    mean_rel_ly_err_low = np.mean(np.array(mean_rel_ly_err_low), axis=0)
 
-            charge = Calc_Charge(
-                mean_waveform,
-                list_templates_charge[channel],
-            )
-
-            charge_records.append((run, channel, charge))
-
-            if run == reference_run:
-                reference_charge[channel] = charge
-
-    missing_references = requested_channels.difference(reference_charge)
-
-    if missing_references:
-        raise RuntimeError(
-            "Missing run 039510 reference for channels "
-            f"{sorted(missing_references)}"
-        )
-
-    points_by_efield = defaultdict(list)
-
-    for run, channel, charge in charge_records:
-        normalized_charge = charge / reference_charge[channel]
-        efield = run_to_efield[run]
-        points_by_efield[efield].append(normalized_charge)
-
-    efields = np.asarray(sorted(points_by_efield), dtype=float)
-
-    means = np.asarray([
-        np.mean(points_by_efield[efield])
-        for efield in efields
-    ], dtype=float)
-
-    sems = np.asarray([
-        (
-            np.std(points_by_efield[efield], ddof=1)
-            / np.sqrt(len(points_by_efield[efield]))
-            if len(points_by_efield[efield]) > 1
-            else 0.0
-        )
-        for efield in efields
-    ], dtype=float)
-
-    return efields, means, sems
-
-study_configs_datasets = [
-    {
-        "label": "This study — mean all channels for M1, channel 2010 ",
-        "datasets": [
-            {
-                "csv_suffix": f"{sample_label}.csv",
-                "channels": {2080,2081},
-            },
-            #{
-            #    "csv_suffix": (
-            #        "coinc_2030-2031-2040-2041_vs_2050-2051-2060-2061_"
-            #        "save_2080-2081_"
-            #        "window_10_ticks_min_amplitude_0_adc.csv"
-            #    ),
-            #    "channels": {2080, 2081},
-            #},
-        ],
-    },
-]
-
-
-
-
-import matplotlib.pyplot as plt
-from matplotlib.ticker import AutoMinorLocator
-from iminuit import Minuit
-from iminuit.cost import LeastSquares
-
-def LArQL(E_D, B_1, k_e, B_2, E_0):
-    E_D = np.abs(np.asarray(E_D, dtype=float))
-
-    return (
-        1.0
-        - B_1 * E_D / (E_D + k_e)
-        + B_2 * (1.0 - np.exp(-E_D / E_0))
-    )
-
-def Birks(E_D, B_1, k_e):
-    E_D = np.abs(np.asarray(E_D, dtype=float))
-
-    return (
-        1.0
-        - B_1 * E_D / (E_D + k_e)
+    #print(mean_rel_ly, mean_rel_ly_err_up, mean_rel_ly_err_low)
+    fit_mask = (
+        (efields > 0.0)
+        & np.isfinite(efields)
+        & np.isfinite(mean_rel_ly)
+        & np.isfinite(mean_rel_ly_err_up)
+        & (mean_rel_ly_err_up > 0.0)
     )
 
 
+    err_low = mean_rel_ly - mean_rel_ly_err_low
+    err_up = mean_rel_ly_err_up - mean_rel_ly
 
-study_results = []
-
-for config in study_configs_datasets:
-    efields, means, sems = calculate_study_mean_all(
-        config["datasets"]
-    )
-    study_results.append({
-        **config,
-        "efields": efields,
-        "means": means,
-        "sems": sems,
-    })
-    print(f"{config["label"]}: {len(means)} electric-field points")
-
-
-print(study_results[0]["efields"])
-efields = study_results[0]["efields"]
-means = study_results[0]["means"]
-sems = study_results[0]["sems"]
-
-fit_mask = (
-    (efields > 0.0)
-    & np.isfinite(efields)
-    & np.isfinite(means)
-    & np.isfinite(sems)
-    & (sems > 0.0)
-)
-
-cost = LeastSquares(
+    err = (err_low + err_up) / 2  # Half-width
+    cost = LeastSquares(
     efields[fit_mask],
-    means[fit_mask],
-    sems[fit_mask],
+    mean_rel_ly[fit_mask],
+    err[fit_mask],
     LArQL,
-)
+    )
 
-#cost = LeastSquares(
-#    efield_previous,
-#    relative_s1_previous,
-#    relative_s1_previous*0.01,
-#    LArQL,
-#)
-
-m = Minuit(cost, 
+    m = Minuit(cost, 
            B_1 = 0.92,
            B_2 = 0.41,
            E_0 = 0.05,
            k_e = 0.07)
 
-m.interactive()
-m.migrad()
-m.hesse()
+    m.interactive()
+    m.migrad()
+    m.hesse()
 
-ndof = np.count_nonzero(fit_mask) - m.nfit
-reduced_chi2 = m.fval / ndof
+    ndof = np.count_nonzero(fit_mask) - m.nfit
+    reduced_chi2 = m.fval / ndof
+    x_fit = np.linspace(0, efields.max(), 500)
 
-with plt.rc_context({
-    "font.size": 11,
-    "axes.labelsize": 12,
-    "axes.titlesize": 15,
-    "legend.fontsize": 9,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-}):
-    fig, ax = plt.subplots(
-        figsize=(10, 6),
-        dpi=140,
-        constrained_layout=True,
+    y_fit = LArQL(
+        x_fit,
+        m.values["B_1"],
+        m.values["k_e"],
+        m.values["B_2"],
+        m.values["E_0"],
     )
 
-    # Previous study
-    ax.scatter(
+    cost_birks = LeastSquares(
+    efields[fit_mask],
+    mean_rel_ly[fit_mask],
+    err[fit_mask],
+    Birks,
+    )
+
+
+    m_birks = Minuit(cost_birks, 
+           B_1 = 1.0,
+           k = 0.1,
+            )
+
+    m_birks.interactive()
+    m_birks.migrad()
+    m_birks.hesse()
+
+    ndof_birks = np.count_nonzero(fit_mask) - m.nfit
+    reduced_chi2_birks = m_birks.fval / ndof_birks
+
+    y_fit_birks = Birks(
+        x_fit,
+        m_birks.values["B_1"],
+        m_birks.values["k"],
+    )
+
+    
+
+    fit_text_larql = (
+        rf"$\mathbf{{Fit\ LArQL:}}$"
+        "\n"
+        rf"$B_1 = {m.values['B_1']:.3f} \pm {m.errors['B_1']:.3f}$"
+        "\n"
+        rf"$k_\epsilon = {m.values['k_e']:.3f} \pm {m.errors['k_e']:.3f}$"
+        "\n"
+        rf"$B_2 = {m.values['B_2']:.3f} \pm {m.errors['B_2']:.3f}$"
+        "\n"
+        rf"$E_0 = {m.values['E_0']:.3f} \pm {m.errors['E_0']:.3f}$"
+        "\n"
+        rf"$\chi^2/\mathrm{{ndof}} = {m.fval:.1f}/{ndof}"
+        rf" = {reduced_chi2:.2f}$"
+        )
+
+    fit_text_birks = (
+        rf"$\mathbf{{Fit\ Birks:}}$"
+        "\n"
+        rf"$B_1 = {m_birks.values['B_1']:.3f} \pm {m_birks._errors['B_1']:.3f}$"
+        "\n"
+        rf"$k_\epsilon = {m_birks.values['k']:.3f} \pm {m_birks.errors['k']:.3f}$"
+        "\n"
+        rf"$\chi^2/\mathrm{{ndof}} = {m_birks.fval:.1f}/{ndof_birks}"
+        rf" = {reduced_chi2_birks:.2f}$"
+        )
+
+    plt.figure(dpi=150)
+    plt.text(
+        0.95,
+        0.95,
+        fit_text_larql,
+        transform=plt.gca().transAxes,
+        ha="right",
+        va="top",
+        fontsize=10,
+        bbox={
+            "boxstyle": "round",
+            "facecolor": "white",
+            "alpha": 0.85,
+        },
+    )
+
+    plt.text(
+        0.95,
+        0.62,
+        fit_text_birks,
+        transform=plt.gca().transAxes,
+        ha="right",
+        va="top",
+        fontsize=10,
+        bbox={
+            "boxstyle": "round",
+            "facecolor": "white",
+            "alpha": 0.85,
+        },
+    )
+
+
+
+    plt.plot(x_fit, y_fit, color="blue", linewidth=2, label="LArQL fit")
+
+    plt.plot(x_fit, y_fit_birks, color="red", ls='--',linewidth=2, label="Birks fit")
+
+    plt.scatter(
         efield_previous,
         relative_s1_previous,
         marker="x",
         alpha=0.9,
-        color='orange',
+        color='gray',
         label="M8 previous study",
     )
 
-    fit_text = (
-    rf"$\mathbf{{Fit\ parameters:}}$"
-    "\n"
-    rf"$B_1 = {m.values['B_1']:.3f} \pm {m.errors['B_1']:.3f}$"
-    "\n"
-    rf"$k_\epsilon = {m.values['k_e']:.3f} \pm {m.errors['k_e']:.3f}$"
-    "\n"
-    rf"$B_2 = {m.values['B_2']:.3f} \pm {m.errors['B_2']:.3f}$"
-    "\n"
-    rf"$E_0 = {m.values['E_0']:.3f} \pm {m.errors['E_0']:.3f}$"
-    "\n"
-    rf"$\chi^2/\mathrm{{ndof}} = {m.fval:.1f}/{ndof}"
-    rf" = {reduced_chi2:.2f}$"
-    )
-    ax.text(
-    0.97,
-    0.97,
-    fit_text,
-    transform=ax.transAxes,
-    ha="right",
-    va="top",
-    fontsize=12,
-    bbox={
-        "boxstyle": "round",
-        "facecolor": "white",
-        "alpha": 0.85,
-    },
-    )
-
-    # Current studies
-    for index, study in enumerate(study_results):
-        ax.errorbar(
-            study["efields"],
-            study["means"],
-            yerr=study["sems"],
-            elinewidth=1.4,
-            capsize=3,
-            capthick=1.2,
-            fmt='*',
-            color='blue',
-            alpha=0.9,
-            label=study["label"],
-        )
-    dunestyle.Preliminary(x=0.5,y=0.9)
-    dunestyle.WIP(x=0.5,y=0.85)
-    # Reference data
-    ax.errorbar(
+    # ProtoDUNE-HD reference
+    plt.errorbar(
         E,
         PD_HD_result,
-        yerr=[PD_HD_err_low, PD_HD_err_high],
-        fmt="o",
-        markersize=3.5,
-        elinewidth=1.4,
-        capsize=3,
-        capthick=1.2,
-        color='orange',
-        label="Reference data PD-HD",
-        zorder=5,
-    )
-    x_fit = np.linspace(0, efields.max(), 500)
-
-    y_fit = LArQL(
-    x_fit,
-    m.values["B_1"],
-    m.values["k_e"],
-    m.values["B_2"],
-    m.values["E_0"],
+        yerr=[
+            PD_HD_err_low,
+            PD_HD_err_high,
+        ],
+        color="gray",
+        fmt=".",
+        capsize=1,
+        label="PD-HD Data",
+        zorder=3,
     )
 
-    y_fit_gabriel = LArQL(
-    x_fit,
-    0.92,
-    0.07,
-    0.41,
-    0.05,
+    plt.errorbar(
+        efields,
+        mean_rel_ly,
+        yerr=[mean_rel_ly - mean_rel_ly_err_low, mean_rel_ly_err_up - mean_rel_ly],
+        fmt=".",
+        label=f"This study, channels: {CHANNELS}",
     )
+    plt.xlabel("Electric field (kV/cm)")
+    plt.ylabel(rf"$S/S_0$ (LY Normalized)")
 
-    ax.plot(x_fit, y_fit, color="blue", linewidth=2, label="This study - LArQL fit")
-    ax.plot(x_fit, y_fit_gabriel, color="orange",ls='--', linewidth=2, label="Previous VD+HD - LArQL fit")
 
-
-    # Reference line at zero-field normalization
-    ax.axhline(
-        1.0,
-        color="0.45",
-        linewidth=1,
-        linestyle="--",
-        alpha=0.6,
-        zorder=1,
+    plt.ylim([0.3,1.2])
+    dunestyle.Preliminary(x=0.05,y=0.9)
+    dunestyle.WIP(x=0.05,y=0.83)
+    plt.legend(loc="lower left",ncols=1 ,frameon=False, fontsize=8)
+    plt.savefig(
+        repo_dir / "analysis" / "LY_vs_EF" / f"fit_LY_one_ch_{'_'.join(map(str,CHANNELS))}.png",
+        dpi=300,
+        bbox_inches="tight",
     )
-
-    ax.set(
-        title="Light yield versus electric field",
-        xlabel=r"Electric field [kV/cm]",
-        ylabel=r"Relative light yield, $S1_{\mathrm{drift}}/S1_0$",
-    )
-
-    ax.xaxis.set_minor_locator(AutoMinorLocator(2))
-    ax.yaxis.set_minor_locator(AutoMinorLocator(2))
-
-    ax.grid(
-        which="major",
-        color="0.82",
-        linewidth=0.8,
-    )
-    ax.grid(
-        which="minor",
-        color="0.92",
-        linewidth=0.5,
-        linestyle=":",
-    )
-
-    ax.tick_params(direction="out", length=4)
-    ax.margins(x=0.03, y=0.05)
-
-    ax.legend(
-        loc="upper left",
-        bbox_to_anchor=(1.02, 1),
-        frameon=True,
-        title="Data Set",
-    )
-    output_dir = repo_dir / "plots"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_dir / "LY_fit.png", format='png', dpi=150)
     plt.show()
+
+if __name__ == "__main__":
+    main()

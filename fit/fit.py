@@ -1,6 +1,6 @@
 """Fit of the deconvolved signal: 2 exponentials (x) Gaussian + C.
 
-Analysis step 3: reads the deconvolved waveforms produced by deconvolve/
+Analysis step 3: reads the deconvolved waveforms produced by deconvolution/
 and fits the LAr scintillation model.
 
 The input is picked by three keys, asked interactively or given on the
@@ -18,7 +18,7 @@ Usage:
     python fit/fit.py --legacy            (the flat deconv_<ch>.txt from the
                                            ROOT pipeline of deconvolve.py)
 
-Outputs under fit/output/:
+Outputs under $PDS_OUTPUT/fit/ (default output/fit/):
     plots/<template>/<column>/fit_<array>_run<run>.png
     data/<template>/<column>/fit_results.txt
 """
@@ -35,14 +35,14 @@ from scipy.special import erfcx
 from iminuit import Minuit
 from iminuit.cost import LeastSquares
 
-from calib.aux import paths
-from calib.aux.plotstyle import use_dune_style
-from deconvolve.config import GAUSS_SIGMA_TICKS, MEAN_REL_ERR, TICK_NS
+from pds import paths
+from pds.plotstyle import use_dune_style
+from deconvolution.config import GAUSS_SIGMA_TICKS, MEAN_REL_ERR, TICK_NS
 
 use_dune_style()
 
 FIT_DIR = paths.FIT_DIR
-DECONV_DATA = paths.DECONV_DIR / "output" / "data"
+DECONV_DATA = paths.DECONV_DIR / "data"
 COINC_DATA = DECONV_DATA / "coincidence"
 
 TEMPLATES = ("mine", "francesca")
@@ -77,11 +77,11 @@ COINC_NAME_RE = re.compile(r"deconv_(.+)_run(\d+)_(\w+)\.txt$")
 
 
 def load_deconvolved(template, column, run="all", data_dir=COINC_DATA):
-    """{(array, run): s(t)} from deconvolve/output/data/coincidence/<template>/."""
+    """{(array, run): s(t)} from output/deconvolution/data/coincidence/<template>/."""
     folder = Path(data_dir) / template
     if not folder.is_dir():
         raise FileNotFoundError(f"{folder} does not exist -- "
-                                f"run deconvolve/deconvolve_coincidence.py first")
+                                f"run deconvolution/deconvolve_coincidence.py first")
 
     out = {}
     for path in sorted(folder.glob(f"deconv_*_{column}.txt")):

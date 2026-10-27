@@ -23,8 +23,8 @@ def calc_integral_and_error(waveform, y_err):
 
 def read_txt_error_file(sample_label,channels):
     """Return {run: {channel: baseline noise in ADC}} (not error on the mean)."""
-    repo_dir = Path(__file__).resolve().parent.parent
-    path_waveforms = (repo_dir / "coincidence/selected_waveforms" / sample_label)
+    from pds import paths
+    path_waveforms = paths.COINC_DIR / sample_label
 
     txt_suffix = f"{sample_label}.txt"
 

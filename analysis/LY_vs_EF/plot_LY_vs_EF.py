@@ -12,7 +12,7 @@ import time
 # Paths
 # ============================================================
 
-path_templates = Path("../../filter/templates_large_pulses/")
+path_templates = Path("../../reference/large_pulse_templates/")
 path_waveforms = Path("../../coincidence/selected_waveforms/20260909_213507/")
 
 

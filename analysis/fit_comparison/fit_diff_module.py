@@ -65,6 +65,7 @@ nao ha efeito.
 """
 import argparse
 import os
+import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -73,13 +74,16 @@ from iminuit import Minuit
 from iminuit.cost import LeastSquares
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/physics
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
-FIT_DIR = os.path.join(REPO_DIR, 'fitting')               # saidas do fitting-bertolini-avg.py
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/analysis/fit_comparison
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+FIT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # saidas do fit/waveform_fits/fitting_bertolini_avg.py
+OUT_DIR = str(paths.OUTPUT_DIR / 'analysis' / 'fit_comparison')
 
 ALL_MODULES = ['M5', 'M6', 'M8']
 BASE = FIT_DIR + '/plots_bertolini_avg/{mod}/parameters/'
-OUTDIR = os.path.join(SCRIPT_DIR, 'plots/fit_diff') + '/'
+OUTDIR = os.path.join(OUT_DIR, 'plots/fit_diff') + '/'
 
 EPS_SEGRETO = 0.003   # kV/cm -- eps+ da apresentacao (satura em ~40 V/cm,
                        # ver slides 10 e 19: "it starts decaying after ~50 V/cm").

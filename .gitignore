@@ -1,38 +1,52 @@
-# Large outputs / datasets (do not commit)
-/analysis/EvalSelectionWithCharge/output/
-/.local/
-*.root
-*.db
-*.npz
-*.sh
-*.pdf
+# ---------------------------------------------------------------------------
+# Code lives in git; data and generated outputs do not (see README "Data").
+# ---------------------------------------------------------------------------
+
+# Inputs and outputs (override with $PDS_DATA / $PDS_OUTPUT)
+/data/
+/output/
+
+# Coincidence products written by coincidence/ executables and scripts
+coincidence/selected_waveforms/
+coincidence/saved_coincidences/
+
+# Rate-analysis products: only the small *_thresholds.txt files are tracked
+analysis/RateAnalysis_data*/*.npz
+
+# Any figure, table or array written next to a script
 *.png
+*.pdf
 *.csv
-*.ipynb
-analysis/plot_fprompt/plot_fprompt.ipynb
+*.npy
+*.npz
+*.root
 
-# Exceptions
-
-!analysis/*.sh
-!analysis/RateAnalysis_data/*.npz
-!plots/
-!plots/**/*.pdf
-!plots/**/*.png
-!coincidence/*/*/*.csv
-!coincidence/*.csv
-!coincidence/*.sh
-!jobs_justin/decoder_selection_jobs/*.sh
-!coincidence/selected_waveforms/**
-
-# folders ignored
+# Build products
 /bin/
-/test/
-/tools/
-/coincidence/docs/
+calibration/read_waveforms
+*.o
+*.so
+*.d
+*.pcm
+*_ACLiC_dict*
+*.tar
+*.tar.gz
 
-#Python Envinroments
-analysis/.venv/
+# Runtime logs / databases
+*.log
+*.db
 
-# ignore ml
+# Python / editors
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.ipynb_checkpoints/
+.cache/
+.vscode/
+.idea/
+.DS_Store
+
+# Personal working folders
 ml-selection-lucca/
 coin_1p0v_code/

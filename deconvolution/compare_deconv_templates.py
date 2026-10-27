@@ -8,8 +8,8 @@ One figure per channel, two panels (from the mean and from the median of the
 coincidence aggregate), each with the two deconvolutions overlaid.
 
 Usage:
-    python deconvolve/compare_deconv_templates.py [csv_path ...]
-    python deconvolve/compare_deconv_templates.py --run 039500
+    python deconvolution/compare_deconv_templates.py [csv_path ...]
+    python deconvolution/compare_deconv_templates.py --run 039500
 
 With no argument it asks for the run and takes every channel available for it.
 """
@@ -22,17 +22,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import matplotlib.pyplot as plt
 
-from calib.aux import paths
-from calib.aux.spe_template import ARRAY_LABEL, load_spe_template
-from calib.aux.waveform import TICK_NS
-from deconvolve.config import GAUSS_SIGMA_TICKS
-from deconvolve.core import (align_template, deconvolve_fft,
+from pds import paths
+from pds.spe_template import ARRAY_LABEL, load_spe_template
+from pds.waveform import TICK_NS
+from deconvolution.config import GAUSS_SIGMA_TICKS
+from deconvolution.core import (align_template, deconvolve_fft,
                              parse_coincidence_name, read_coincidence_csv)
-from deconvolve.deconvolve_coincidence import (COLUMNS, DEFAULT_TEMPLATE_RUNS,
+from deconvolution.deconvolve_coincidence import (COLUMNS, DEFAULT_TEMPLATE_RUNS,
                                                PLOT_XLIM_US, template_label)
 
 DECONV_DIR = paths.DECONV_DIR
-COINC_DIR = paths.REPO_ROOT / "coincidence" / "selected_waveforms"
+COINC_DIR = paths.COINC_DIR
 
 
 def csvs_for_run(run):

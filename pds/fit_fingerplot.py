@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from iminuit import Minuit
 from iminuit.cost import LeastSquares
-from calib.aux import functions as fc
-from calib.aux import paths
+from pds import functions as fc
+from pds import paths
 
 CALIB_DIR = paths.CALIB_DIR
 

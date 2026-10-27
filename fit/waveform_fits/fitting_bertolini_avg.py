@@ -16,8 +16,11 @@ from iminuit import Minuit
 from iminuit.cost import LeastSquares
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/fitting
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
 
 SAMPLE = 16  # ns
 
@@ -188,7 +191,7 @@ def fit_uncertainty(waveform, waveform_err, mask):
     ) * np.ones(int(mask.sum()))
 
 
-output_folder = os.path.join(SCRIPT_DIR, f'plots_bertolini_avg/{MODULE}')
+output_folder = os.path.join(OUT_DIR, f'plots_bertolini_avg/{MODULE}')
 
 for folder in ['templates', 'deconv', 'fits', 'fit', 'parameters']:
     os.makedirs(f'{output_folder}/{folder}', exist_ok=True)
@@ -260,11 +263,11 @@ def model(t, t0, Aslow, Afast, tau_slow, tau_fast):
 time_array = np.arange(0, 1024 * SAMPLE, SAMPLE) / 1000  # us
 
 template_m8_1 = np.loadtxt(
-    REPO_DIR + f'/calib/output/data/templates/francesca_template/{CFG["templates"][0]}'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["templates"][0]}'
 )
 
 template_m8_2 = np.loadtxt(
-    REPO_DIR + f'/calib/output/data/templates/francesca_template/{CFG["templates"][1]}'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["templates"][1]}'
 )
 
 plt.figure()

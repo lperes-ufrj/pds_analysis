@@ -1,4 +1,5 @@
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import scipy as sci
@@ -9,8 +10,11 @@ from iminuit import Minuit
 from iminuit.cost import LeastSquares
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/fitting
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
 
 SAMPLE = 16  # ns
 
@@ -49,7 +53,7 @@ CHANNEL_CONFIG = {
     2051: dict(template='template_41522_M5_2.txt', scan=SCAN_LOW, skip_fields=()),
 }
 
-# canais com template proprio em calib/output/data/templates/041256
+# canais com template proprio em output/calibration/data/templates/041256
 MINE_TEMPLATE = (2080, 2081)
 
 if CHANNEL not in MINE_TEMPLATE:
@@ -115,7 +119,7 @@ def fit_uncertainty(waveform, waveform_err, mask):
     ) * np.ones(int(mask.sum()))
 
 
-output_folder = os.path.join(SCRIPT_DIR, f'plots_bertolini_mine/{CHANNEL}')
+output_folder = os.path.join(OUT_DIR, f'plots_bertolini_mine/{CHANNEL}')
 
 for folder in ['templates', 'deconv', 'fits', 'fit', 'parameters']:
     os.makedirs(f'{output_folder}/{folder}', exist_ok=True)
@@ -218,11 +222,11 @@ def model(t, t0, Aslow, Afast, tau_slow, tau_fast):
 time_array = np.arange(0, 1024 * SAMPLE, SAMPLE) / 1000  # us
 
 template_m8_1 = np.loadtxt(
-    REPO_DIR + '/calib/output/data/templates/francesca_template/template_42156_M8_1.txt'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + '/template_42156_M8_1.txt'
 )
 
 template_m8_2 = np.loadtxt(
-    REPO_DIR + '/calib/output/data/templates/francesca_template/template_42156_M8_2.txt'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + '/template_42156_M8_2.txt'
 )
 
 plt.figure()
@@ -237,11 +241,11 @@ plt.close()
 # my templates
 
 template_2080 = np.load(
-    REPO_DIR + '/calib/output/data/templates/041256/template_2080.npy'
+    str(paths.TEMPLATES_DIR) + '/041256/template_2080.npy'
 )
 
 template_2081 = np.load(
-    REPO_DIR + '/calib/output/data/templates/041256/template_2081.npy'
+    str(paths.TEMPLATES_DIR) + '/041256/template_2081.npy'
 )
 
 
@@ -257,7 +261,7 @@ plt.close()
 # pareamento canal <-> template: o kernel e o template proprio do canal
 template_2081 = {2080: template_2080, 2081: template_2081}[CHANNEL]
 
-# kernel do fit: template PROPRIO do canal 2081 (calib/.../041256), causal,
+# kernel do fit: template PROPRIO do canal 2081 (output/calibration/.../041256), causal,
 # com a cauda derivante cortada e area unitaria.
 
 KERNEL_TAIL_CUT = 'auto'   # None para usar o template inteiro, sem corte

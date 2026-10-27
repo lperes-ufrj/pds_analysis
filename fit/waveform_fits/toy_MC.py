@@ -18,6 +18,7 @@ fill TRUTH_POINTS with parameters obtained from that same model.
 """
 
 import argparse
+import sys
 import time
 from pathlib import Path
 
@@ -42,9 +43,10 @@ except ImportError:
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # SPE template (Francesca, channel 2081).
-REPO_DIR = SCRIPT_DIR.parent   # fitting -> sag_analysis
-TEMPLATE_PATH = (REPO_DIR / "calib" / "output" / "data" / "templates"
-                 / "francesca_template" / "template_42156_M8_2.txt")
+REPO_DIR = SCRIPT_DIR.parents[1]   # fit/waveform_fits -> <repo>
+sys.path.insert(0, str(REPO_DIR))
+from pds import paths  # noqa: E402
+TEMPLATE_PATH = paths.FRANCESCA_TEMPLATE_DIR / "template_42156_M8_2.txt"
 
 DT = 0.016            # sampling period [us]
 T_MAX = 10.0          # length of the simulated window [us]
@@ -104,7 +106,7 @@ MAKE_POINT_PLOTS = False
 FREE_PARAMS = ["A_fast", "A_slow", "tau_slow", "t0"]
 DERIVED = ["I_fast", "I_slow", "F_prompt", "I_dif"]
 
-OUTPUT_DIR = SCRIPT_DIR / "output" / "toy_mc"
+OUTPUT_DIR = paths.FIT_DIR / "waveform_fits" / "toy_mc"
 
 
 # =============================================================================

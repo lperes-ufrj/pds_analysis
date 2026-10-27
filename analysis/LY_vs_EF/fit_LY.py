@@ -26,7 +26,7 @@ from iminuit.cost import LeastSquares
 
 repo_dir = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(repo_dir))
-from src.src import calc_integral_and_error,read_txt_error_file
+from pds.integrals import calc_integral_and_error,read_txt_error_file
 
 
 SAMPLE_LABELS = ['20260909_213507','20260909_125014']
@@ -34,7 +34,7 @@ CHANNELS = [2050,2051,2060,2061,2080,2081]
 script_dir = Path(__file__).resolve().parent.parent
 #print(f"Script directory: {script_dir}")
 repo_dir = script_dir.parent
-path_templates = "../" / repo_dir / "filter/templates_large_pulses"
+path_templates = repo_dir / "reference/large_pulse_templates"
 
 templates_ch_1010_charge = np.trapezoid(np.loadtxt(path_templates / "template_42228_C1_1.txt"))
 templates_ch_1011_charge = np.trapezoid(np.loadtxt(path_templates / "template_42228_C1_2.txt"))

@@ -1,12 +1,12 @@
 """Deconvolution of the average physics waveform by the SPE template.
 
-Analysis step 2: consumes the SPE template produced by calib/ and the
+Analysis step 2: consumes the SPE template produced by calibration/ and the
 coincidence ROOT file, and delivers the deconvolved waveform in p.e./tick.
 
 Usage:
-    python deconvolve/deconvolve.py   (or: cd deconvolve && python deconvolve.py)
+    python deconvolution/deconvolve.py   (or: cd deconvolution && python deconvolve.py)
 
-Outputs under deconvolve/output/:
+Outputs under $PDS_OUTPUT/deconvolution/ (default output/deconvolution/):
     plots/filtering/      persistence, all vs filtered
     plots/average/        robust average of the physics signal
     plots/align/          template vs average overlay (shift check)
@@ -24,15 +24,15 @@ import uproot
 import numpy as np
 import matplotlib.pyplot as plt
 
-from calib.aux import functions as fc
-from calib.aux import paths
-from calib.aux.spe_template import template_path
-from calib.aux.waveform import robust_template, persistence_hist
-from deconvolve.config import GAUSS_SIGMA_TICKS
+from pds import functions as fc
+from pds import paths
+from pds.spe_template import template_path
+from pds.waveform import robust_template, persistence_hist
+from deconvolution.config import GAUSS_SIGMA_TICKS
 
 DECONV_DIR = paths.DECONV_DIR
 
-# coincidence ROOT file -- unchanged for now (calib/.roots/physics)
+# coincidence ROOT file ($PDS_DATA/roots/physics)
 PHYS_FILE = (paths.ROOTS_DIR / "physics" /
              "coincident_waveforms_fast_window_20_ticks"
              "_coinc_adc_4000_save_adc_4000.root")
@@ -184,7 +184,7 @@ def filter_and_average(phys_path=PHYS_FILE):
 
 
 def load_template(ch):
-    """SPE template produced by calib/ (calib/output/data/templates/)."""
+    """SPE template produced by calibration/ (output/calibration/data/templates/)."""
     return np.load(template_path(TEMPLATE_RUNS[ch], ch))
 
 

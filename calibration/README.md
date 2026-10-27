@@ -4,7 +4,7 @@ SPE calibration of the X-ARAPUCAs M7 and M8 from DAPHNE waveforms (PD-VD).
 
 This folder does **calibration only**: per-waveform metrics (C++) → fingerplot
 → multigauss fit → SPE template. The deconvolution and the fit live in
-`deconvolve/` and `fit/`, at the repository root (see `../README.md`).
+`deconvolution/` and `fit/`, at the repository root (see `../README.md`).
 
 ## Channels
 
@@ -21,17 +21,17 @@ number; X = SiPM array, 0 or 1) → `channel = 2000 + N*10 + X`:
 ## Step 0 — `read_waveforms.cpp`
 
 ```bash
-make            # clang++ read_waveforms.cpp aux/waveform_utils.cpp -o read_waveforms $(root-config --cflags --libs)
+make            # clang++ read_waveforms.cpp waveform_utils.cpp -o read_waveforms $(root-config --cflags --libs)
 ./read_waveforms   # asks for the run number and the module (M7, M8, ...) on stdin
 ```
 
-Reads `.roots/np02vd_raw_run<run>*_gallery.root`, computes the metrics of each
+Reads `$PDS_DATA/roots/np02vd_raw_run<run>*_gallery.root`, computes the metrics of each
 waveform and writes **two** files:
 
 | Output | Contents |
 |---|---|
-| `.roots/metrics_raw/run<run>_metrics_raw.root` | one `Metrics_<ch>` TTree per channel, **all** waveforms |
-| `.roots/metrics_select/run<run>_metrics_select.root` | same, only those passing the preselection, **and with the `wf_nobaseline` branch** |
+| `$PDS_DATA/roots/metrics_raw/run<run>_metrics_raw.root` | one `Metrics_<ch>` TTree per channel, **all** waveforms |
+| `$PDS_DATA/roots/metrics_select/run<run>_metrics_select.root` | same, only those passing the preselection, **and with the `wf_nobaseline` branch** |
 
 `metrics_select` is what feeds the fingerplot — i.e. **the fingerplot already
 comes with the C++ preselection applied**:
@@ -44,7 +44,7 @@ post_max < 50  && post_min > -40
 ```
 
 It also saves the raw and selected persistences under
-`output/plots/adc-baseline/`.
+`$PDS_OUTPUT/calibration/plots/adc-baseline/`.
 
 > The channels are derived at runtime from the module name typed on stdin,
 > following the LArSoft map (`M7` → 2070/2071, `M8` → 2080/2081, `C5` →
@@ -85,15 +85,15 @@ All amplitudes and integrals are **baseline-subtracted**.
 ## Steps 1 and 2 — `main.py`
 
 ```bash
-python calib/main.py    # asks for the calibration run
+python calibration/main.py    # asks for the calibration run
 ```
 
 A single call does both, on top of `metrics_select`:
 
-1. **Fingerplot + multigauss fit** (`aux/fit_fingerplot.py`) — histogram of
+1. **Fingerplot + multigauss fit** (`pds/fit_fingerplot.py`) — histogram of
    `integral`, fit of a pedestal Gaussian plus 3 p.e. peaks with a common gain.
    Returns `{channel: Minuit}`; the SPE gain is the `gain` parameter.
-2. **SPE template** (`aux/spe_template.py`) — selects the waveforms under the
+2. **SPE template** (`pds/spe_template.py`) — selects the waveforms under the
    1 to 3 p.e. peaks (window `q0 + n·gain ± σ_n`), normalizes by `n`, applies
    the quality cuts and takes the per-tick robust average.
 
@@ -131,17 +131,17 @@ bias of the mode-based baseline estimate done in C++.
 ## Extra: `compare_templates.py`
 
 ```bash
-python calib/compare_templates.py
+python calibration/compare_templates.py
 ```
 
 Compares the SPE template of the same channel across the two calibration
 campaigns (M7: 039365 vs 039473; M8: 039366 vs 039474), plots them overlaid and
-saves their average under `output/data/templates/media/`. See the README in
+saves their average under `$PDS_OUTPUT/calibration/data/templates/media/`. See the README in
 that folder.
 
 ---
 
-## Outputs (`output/`)
+## Outputs (`$PDS_OUTPUT/calibration/`, default `output/calibration/`)
 
 | Path | Contents |
 |---|---|
@@ -150,10 +150,10 @@ that folder.
 | `plots/multigauss/<run>/` | multigauss fit with SPE gain and χ²/ndf |
 | `plots/spe_template/<run>/<ch>/` | per-peak persistences (before/after cuts) and the template |
 | `plots/compare_templates/` | template comparison across campaigns |
-| **`data/templates/<run>/template_<ch>.npy`** | **SPE template — consumed by `deconvolve/`** |
+| **`data/templates/<run>/template_<ch>.npy`** | **SPE template — consumed by `deconvolution/`** |
 | `data/templates/media/` | average of the two campaigns |
 | `plots/raw_wfs/` | example waveforms (C++ block currently commented out) |
-| `plots/ct/` | crosstalk — orphan: `prob_crosstalk_func` exists in `aux/functions.py` but no pipeline script calls it |
+| `plots/ct/` | crosstalk — orphan: `prob_crosstalk_func` exists in `pds/functions.py` but no pipeline script calls it |
 
 ## Modules
 
@@ -161,10 +161,10 @@ that folder.
 |---|---|
 | `main.py` | calibration runner |
 | `compare_templates.py` | cross-campaign template comparison and average |
-| `read_waveforms.cpp`, `aux/waveform_utils.{cpp,h}` | per-waveform metrics |
-| `aux/fit_fingerplot.py` | fingerplot + multigauss fit → `{channel: Minuit}` |
-| `aux/spe_template.py` | quality cuts + SPE template |
-| `aux/functions.py` | `latest_cycle_keys`, `multi_gauss`, crosstalk |
-| `aux/waveform.py` | `robust_template`, persistences — shared with `deconvolve/` |
-| `aux/paths.py` | path anchors and `.txt` I/O |
-| `aux/plot_pehist.py` | 2D histogram in p.e. (standalone, not called by `main.py`) |
+| `read_waveforms.cpp`, `waveform_utils.{cpp,h}` | per-waveform metrics |
+| `pds/fit_fingerplot.py` | fingerplot + multigauss fit → `{channel: Minuit}` |
+| `pds/spe_template.py` | quality cuts + SPE template |
+| `pds/functions.py` | `latest_cycle_keys`, `multi_gauss`, crosstalk |
+| `pds/waveform.py` | `robust_template`, persistences — shared with `deconvolution/` |
+| `pds/paths.py` | path anchors and `.txt` I/O |
+| `pds/plot_pehist.py` | 2D histogram in p.e. (standalone, not called by `main.py`) |

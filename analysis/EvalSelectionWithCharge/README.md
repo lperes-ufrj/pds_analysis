@@ -22,7 +22,7 @@ product names were also checked in the requested `df-s04-d0` file itself.
 ## Run
 
 Use a DUNE environment with Gallery, canvas, lardataobj, and ROOT (for example,
-the same environment used for `selection/gallery_pdvddaphne.C`). Plain ROOT
+the same environment used for `decoding/grid/tarball/gallery_pdvddaphne.C`). Plain ROOT
 without LArSoft dictionaries cannot read these products. From the repository:
 
 ```sh
@@ -98,7 +98,7 @@ high_tick = (H - trigger_ns + offset - tick_zero_relative_to_trigger_ns
 ```
 
 The conversion preserves the upstream optical timestamp convention: integer
-nanoseconds, as exported by `selection/gallery_pdvddaphne.C`. Verify that the
+nanoseconds, as exported by `decoding/grid/tarball/gallery_pdvddaphne.C`. Verify that the
 run's decoder uses this convention and that the trigger clock has a compatible
 origin. Large absolute timestamps are subtracted before narrowing to double.
 The drift time must correspond to this run's electric field and drift distance.

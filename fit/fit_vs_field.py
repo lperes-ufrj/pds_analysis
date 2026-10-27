@@ -1,7 +1,7 @@
 """Plot the fit parameters against the electric field.
 
-Reads the fit_results.txt written by fit/all_eletric_field.py for the mean and
-for the median, maps each run to its cathode HV via calib/aux/runs.py, and
+Reads the fit_results.txt written by fit/all_electric_field.py for the mean and
+for the median, maps each run to its cathode HV via pds/runs.py, and
 draws every fit variable -- including chi2/ndf -- as a function of the field.
 
 Colour separates the aggregate (mean vs median); marker separates the SiPM
@@ -11,8 +11,8 @@ Usage:
     python fit/fit_vs_field.py [template]
 
 Output:
-    fit/output/plots/<template>/fit_vs_field.png
-    fit/output/data/<template>/fit_vs_field.txt
+    output/fit/plots/<template>/fit_vs_field.png
+    output/fit/data/<template>/fit_vs_field.txt
 """
 import sys
 from pathlib import Path
@@ -22,15 +22,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import matplotlib.pyplot as plt
 
-from calib.aux import paths
-from calib.aux.plotstyle import use_dune_style
-from calib.aux.runs import field_of
+from pds import paths
+from pds.plotstyle import use_dune_style
+from pds.runs import field_of
 from fit.fit import TEMPLATES, ask
 
 use_dune_style()
 
 FIT_DIR = paths.FIT_DIR
-FIT_DATA = FIT_DIR / "output" / "data"
+FIT_DATA = FIT_DIR / "data"
 
 COLUMNS = ("mean", "median")
 COLOUR = {"mean": "tab:blue", "median": "tab:orange"}
@@ -97,7 +97,7 @@ def main():
 
     data = {col: read_results(template, col) for col in COLUMNS}
     if not any(data.values()):
-        print("no fit_results.txt found -- run fit/all_eletric_field.py first")
+        print("no fit_results.txt found -- run fit/all_electric_field.py first")
         return 1
 
     n = len(FIELDS)

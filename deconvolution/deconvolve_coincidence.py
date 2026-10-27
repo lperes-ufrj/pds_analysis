@@ -14,7 +14,7 @@ ROOT files listed in coincidence/input_lists/ (on /pnfs), so no persistence
 can be built from them -- the percentile_16/84 band is the closest proxy.
 
 Usage:
-    python deconvolve/deconvolve_coincidence.py [csv_path] [template_source]
+    python deconvolution/deconvolve_coincidence.py [csv_path] [template_source]
 
     csv_path         path to the aggregate CSV (asked if omitted)
     template_source  a calibration run ("039365", "media", ...) or
@@ -28,12 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import matplotlib.pyplot as plt
 
-from calib.aux import paths
-from calib.aux.spe_template import (ARRAY_LABEL, load_spe_template,
+from pds import paths
+from pds.spe_template import (ARRAY_LABEL, load_spe_template,
                                     template_path, francesca_template_path)
-from calib.aux.waveform import TICK_NS
-from deconvolve.config import GAUSS_SIGMA_TICKS, MEAN_REL_ERR
-from deconvolve.core import (align_template, deconvolve_fft, deconvolve_fft_err,
+from pds.waveform import TICK_NS
+from deconvolution.config import GAUSS_SIGMA_TICKS, MEAN_REL_ERR
+from deconvolution.core import (align_template, deconvolve_fft, deconvolve_fft_err,
                              parse_coincidence_name, read_coincidence_csv)
 
 DECONV_DIR = paths.DECONV_DIR

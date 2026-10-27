@@ -3,13 +3,13 @@
 Deliberately free of heavy dependencies (no uproot): fit/ imports from here
 instead of importing the whole deconvolve.deconvolve module.
 """
-from calib.aux.waveform import TICK_NS  # noqa: F401  (re-exported: ns per tick)
+from pds.waveform import TICK_NS  # noqa: F401  (re-exported: ns per tick)
 
 # sigma (in ticks) of the Gaussian filter applied in the frequency domain:
 # G[f] = exp(-2 (pi f sigma)^2). Equivalent to convolving s(t) with a Gaussian
 # of sigma ticks (1 tick = 16 ns).
 #
-# From deconvolve/sigma_scan.py, the pre-signal noise RMS of s(t) falls fast
+# From deconvolution/sigma_scan.py, the pre-signal noise RMS of s(t) falls fast
 # with sigma (11.3 -> 1.5 -> 0.65 -> 0.39 -> 0.28 -> 0.22 p.e./tick for
 # sigma = 1..6) while the peak amplitude falls roughly like 1/sigma. sigma = 6
 # is the smoothest end of the scan: cleanest tail, least resolution.

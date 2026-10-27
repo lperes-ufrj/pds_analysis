@@ -3,7 +3,7 @@
 Average of the SPE templates of the same channel obtained in **two independent
 calibration campaigns**.
 
-Produced by [`calib/compare_templates.py`](../../../compare_templates.py).
+Produced by [`calibration/compare_templates.py`](../../../calibration/compare_templates.py).
 
 | Channel | Module | Run A | Run B |
 |---|---|---|---|
@@ -51,7 +51,7 @@ by quality — it is a plain mean of the two templates.
 ## How to use it in the deconvolution
 
 The folder behaves as a pseudo-run, so it is enough to point `TEMPLATE_RUNS`
-in `deconvolve/deconvolve.py` at it:
+in `deconvolution/deconvolve.py` at it:
 
 ```python
 TEMPLATE_RUNS = {2070: "media", 2071: "media", 2080: "media", 2081: "media"}

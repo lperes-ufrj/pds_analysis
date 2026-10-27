@@ -9,10 +9,18 @@
 #include <vector>
 #include <map>
 #include <algorithm>
-#include "aux/waveform_utils.h"
+#include "waveform_utils.h"
 #include "TStyle.h"
 #include <string>
 #include <cctype>
+#include <cstdlib>
+#include "TSystem.h"
+
+// Same defaults as pds/paths.py, relative to calibration/ (where this runs).
+static std::string env_or(const char* name, const char* fallback) {
+    const char* value = std::getenv(name);
+    return value ? value : fallback;
+}
 
 /*
     SPE calibration — the module is chosen at runtime (stdin), not compiled in.
@@ -138,7 +146,13 @@ int main(){
         post_max_cut = 200; post_min_cut = -160;
     }
 
-    std::string input_pattern = "roots/np02vd_raw_run" + run + "*_gallery.root";
+    const std::string roots_dir = env_or("PDS_DATA", "../data") + "/roots";
+    const std::string plot_dir  = env_or("PDS_OUTPUT", "../output") + "/calibration/plots/adc-baseline";
+    gSystem->mkdir((roots_dir + "/metrics_raw").c_str(), true);
+    gSystem->mkdir((roots_dir + "/metrics_select").c_str(), true);
+    gSystem->mkdir(plot_dir.c_str(), true);
+
+    std::string input_pattern = roots_dir + "/np02vd_raw_run" + run + "*_gallery.root";
 
     run_calib->Add(input_pattern.c_str()); // read all root files in order
 
@@ -159,8 +173,8 @@ int main(){
     run_calib->SetBranchAddress("adc", &adc);
 
     // output files: one tree per channel inside each
-    std::string out_raw = "roots/metrics_raw/run" + run + "_metrics_raw.root";
-    std::string out_sel = "roots/metrics_select/run" + run + "_metrics_select.root";
+    std::string out_raw = roots_dir + "/metrics_raw/run" + run + "_metrics_raw.root";
+    std::string out_sel = roots_dir + "/metrics_select/run" + run + "_metrics_select.root";
 
     TFile* fraw = new TFile(out_raw.c_str(), "RECREATE");
     TFile* fsel = new TFile(out_sel.c_str(), "RECREATE");
@@ -282,13 +296,13 @@ int main(){
         TCanvas* cp = new TCanvas("cp", "cp", 1200, 700);
         cp->SetLogz();
         ch[k].h_raw->Draw("colz");
-        cp->SaveAs(Form("output/plots/adc-baseline/run%s_%d_ADC-baseline_raw.png", run.c_str(), CHANNELS[k]));
+        cp->SaveAs(Form("%s/run%s_%d_ADC-baseline_raw.png", plot_dir.c_str(), run.c_str(), CHANNELS[k]));
         delete cp; delete ch[k].h_raw;
 
         TCanvas* cp2 = new TCanvas("cp2", "cp2", 1200, 700);
         cp2->SetLogz();
         ch[k].h_sel->Draw("colz");
-        cp2->SaveAs(Form("output/plots/adc-baseline/run%s_%d_ADC-baseline_selec.png", run.c_str(), CHANNELS[k]));
+        cp2->SaveAs(Form("%s/run%s_%d_ADC-baseline_selec.png", plot_dir.c_str(), run.c_str(), CHANNELS[k]));
         delete cp2; delete ch[k].h_sel;
     }
 

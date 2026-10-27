@@ -16,7 +16,7 @@ from iminuit.cost import LeastSquares
 
 repo_dir = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(repo_dir))
-from src.src import calc_integral_and_error,read_txt_error_file
+from pds.integrals import calc_integral_and_error,read_txt_error_file
 
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 SAMPLE_LABELS = ['20260909_213507','20260909_125014']

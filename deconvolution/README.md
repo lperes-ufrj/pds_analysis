@@ -2,19 +2,19 @@
 
 Deconvolution of the average physics waveform by the SPE template.
 
-Analysis step 2: consumes the SPE template produced by `calib/` and the
+Analysis step 2: consumes the SPE template produced by `calibration/` and the
 coincidence ROOT file, and delivers the deconvolved waveform in **p.e./tick**.
 
 ```bash
-python deconvolve/deconvolve.py
+python deconvolution/deconvolve.py
 ```
 
 ## Inputs
 
 | What | Path |
 |---|---|
-| SPE template | `calib/output/data/templates/<run>/template_<ch>.npy` |
-| Coincidences | `calib/.roots/physics/coincident_waveforms_*.root` |
+| SPE template | `output/calibration/data/templates/<run>/template_<ch>.npy` |
+| Coincidences | `$PDS_DATA/roots/physics/coincident_waveforms_*.root` |
 
 The channel → calibration run map is in `TEMPLATE_RUNS` (2070/2071 ← 039365,
 2080/2081 ← 039366). Set it to `"media"` to use the cross-campaign average.
@@ -30,7 +30,7 @@ The channel → calibration run map is in `TEMPLATE_RUNS` (2070/2071 ← 039365,
 3. **`deconvolve_average`** — `s[f] = V[f]·G[f]/H[f]` with a Gaussian filter
    `G[f] = exp(-2(π f σ)²)`, σ from `config.GAUSS_SIGMA_TICKS`.
 
-## Outputs (`output/`)
+## Outputs (`$PDS_OUTPUT/deconvolution/`, default `output/deconvolution/`)
 
 | Path | Contents |
 |---|---|
@@ -43,7 +43,7 @@ The channel → calibration run map is in `TEMPLATE_RUNS` (2070/2071 ← 039365,
 | **`data/deconv_<ch>.txt`** | **deconvolved waveform — consumed by `fit/`** |
 
 The `.txt` follows the format of the templates in
-`filter/templates_large_pulses/`: one value per line, `%.9e`.
+`reference/large_pulse_templates/`: one value per line, `%.9e`.
 
 ## Coincidence CSVs (`selected_waveforms/`)
 
@@ -60,8 +60,8 @@ the repository alone** — the `percentile_16/84` band is the closest proxy.
 The average, however, is already computed, which is enough to deconvolve.
 
 ```bash
-python deconvolve/deconvolve_coincidence.py <csv> [mine|francesca]
-python deconvolve/compare_deconv_templates.py --run 039500
+python deconvolution/deconvolve_coincidence.py <csv> [mine|francesca]
+python deconvolution/compare_deconv_templates.py --run 039500
 ```
 
 | Script | Purpose |
@@ -70,7 +70,7 @@ python deconvolve/compare_deconv_templates.py --run 039500
 | `compare_deconv_templates.py` | same average, both templates (ours and Francesca's), one figure per channel |
 | `core.py` | shared math: `align_template`, `deconvolve_fft`, CSV reader |
 
-Outputs under `output/{plots,data}/coincidence/`.
+Outputs under `output/deconvolution/{plots,data}/coincidence/`.
 
 ## Configuration
 

@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import awkward as ak
 from matplotlib.colors import LogNorm
-from calib.aux import functions as fc
+from pds import functions as fc
 
 def plot_PE_2dhist(f, mean_spe):
     keys = fc.latest_cycle_keys(f)

@@ -8,6 +8,7 @@ objetivo e ver se a janela esta truncando a cauda lenta.
 make_causal_kernel() e model() sao copias literais de fitting-bertolini.py.
 """
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,8 +18,11 @@ from iminuit import Minuit
 from iminuit.cost import LeastSquares
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/fitting
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
 
 
 # configuracao
@@ -63,7 +67,7 @@ initial_guesses = {
     'tau_fast': TAU_FAST_FIXED,
 }
 
-output_folder = os.path.join(SCRIPT_DIR, f'plots_bertolini/{CHANNEL}')
+output_folder = os.path.join(OUT_DIR, f'plots_bertolini/{CHANNEL}')
 
 os.makedirs(f'{output_folder}/parameters', exist_ok=True)
 
@@ -73,7 +77,7 @@ os.makedirs(f'{output_folder}/parameters', exist_ok=True)
 time_array = np.arange(0, 1024 * SAMPLE, SAMPLE) / 1000  # us
 
 template = np.loadtxt(
-    REPO_DIR + f'/calib/output/data/templates/francesca_template/{CFG["template"]}'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["template"]}'
 )
 
 

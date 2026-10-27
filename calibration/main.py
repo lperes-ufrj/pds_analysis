@@ -1,13 +1,13 @@
 """SPE calibration: fingerplot -> multigauss fit -> SPE template.
 
 Usage:
-    python calib/main.py            (or: cd calib && python main.py)
+    python calibration/main.py      (or: cd calibration && python main.py)
 
-Outputs under calib/output/:
+Outputs under $PDS_OUTPUT/calibration/ (default output/calibration/):
     plots/fingerplot/<run>/        raw fingerplot per channel
     plots/multigauss/<run>/        multigauss fit (SPE gain)
     plots/spe_template/<run>/<ch>/ persistences and template
-    data/templates/<run>/template_<ch>.npy   <- consumed by deconvolve/
+    data/templates/<run>/template_<ch>.npy   <- consumed by deconvolution/
 """
 import sys
 from pathlib import Path
@@ -16,9 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import uproot
 
-from calib.aux import paths
-from calib.aux import fit_fingerplot as fg_fit
-from calib.aux import spe_template as spe
+from pds import paths
+from pds import fit_fingerplot as fg_fit
+from pds import spe_template as spe
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
     templates = spe.spe_template(f, m_dict, calib_run)
 
     print(f"\nTemplates saved to "
-          f"{paths.CALIB_DIR / 'output' / 'data' / 'templates' / calib_run}")
+          f"{paths.TEMPLATES_DIR / calib_run}")
     return m_dict, templates
 
 

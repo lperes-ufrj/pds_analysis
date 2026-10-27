@@ -60,8 +60,11 @@ from iminuit.cost import LeastSquares
 from scipy.signal import fftconvolve
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/fitting
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
 
 SAMPLE = 16                                               # ns
 DT = SAMPLE / 1000.0                                      # us
@@ -133,7 +136,7 @@ MODULE = escolhe_modulo()
 CFG = MODULE_CONFIG[MODULE]
 print(f'\n>>> modulo {MODULE}  (canais {CFG["channels"][0]} + {CFG["channels"][1]})\n')
 
-output_folder = os.path.join(SCRIPT_DIR, f'plots_xe_transfer/{MODULE}')
+output_folder = os.path.join(OUT_DIR, f'plots_xe_transfer/{MODULE}')
 for sub in ('fit', 'parameters'):
     os.makedirs(f'{output_folder}/{sub}', exist_ok=True)
 
@@ -166,8 +169,7 @@ def make_causal_kernel(template, n_baseline=5):
     return k / (k.sum() * DT)
 
 
-templates = [np.loadtxt(f'{REPO_DIR}/calib/output/data/templates/'
-                        f'francesca_template/{t}') for t in CFG['templates']]
+templates = [np.loadtxt(f'{paths.FRANCESCA_TEMPLATE_DIR}/{t}') for t in CFG['templates']]
 FIT_KERNEL = 0.5 * (make_causal_kernel(templates[0])
                     + make_causal_kernel(templates[1]))
 

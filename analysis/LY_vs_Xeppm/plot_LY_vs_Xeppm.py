@@ -14,7 +14,7 @@ import time
 
 script_dir = Path(__file__).resolve().parent
 repo_dir = script_dir.parents[1]
-path_templates = repo_dir / "filter" / "templates_large_pulses"
+path_templates = repo_dir / "reference" / "large_pulse_templates"
 path_waveforms = repo_dir / "coincidence" / "selected_waveforms" / "20261002_120415"
 
 

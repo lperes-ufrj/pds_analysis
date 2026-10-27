@@ -1,6 +1,6 @@
 """Electric-field scan: run <-> cathode HV.
 
-Single source for the run map, shared by the batch scripts in deconvolve/
+Single source for the run map, shared by the batch scripts in deconvolution/
 and fit/ and by the field plots.
 
 The scan was taken twice: rising voltage (17 points, ~10 kV steps) and

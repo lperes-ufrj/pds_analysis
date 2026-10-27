@@ -2,7 +2,7 @@
 
 Fit of the deconvolved signal: two exponentials ⊗ Gaussian + constant.
 
-Analysis step 3: reads the `deconv_<ch>.txt` files produced by `deconvolve/`
+Analysis step 3: reads the `deconv_<ch>.txt` files produced by `deconvolution/`
 and fits the LAr scintillation model.
 
 ```bash
@@ -26,9 +26,9 @@ edges and the template wrap region).
 
 ## Input
 
-`deconvolve/output/data/deconv_<ch>.txt` — every channel found by the glob.
+`output/deconvolution/data/deconv_<ch>.txt` — every channel found by the glob.
 
-## Outputs (`output/`)
+## Outputs (`$PDS_OUTPUT/fit/`, default `output/fit/`)
 
 | Path | Contents |
 |---|---|

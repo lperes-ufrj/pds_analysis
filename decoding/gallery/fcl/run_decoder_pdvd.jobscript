@@ -5,8 +5,8 @@
 
 Before submitting, create and upload the tar:
 
-cd /exp/dune/app/users/lperes/sag_analysis
-tar cvf sag_local_fcl.tar selection/fcl/get_pds.fcl
+cd /exp/dune/app/users/$USER/pds_analysis
+tar cvf sag_local_fcl.tar -C decoding/grid/tarball get_pds.fcl
 
 source /cvmfs/dune.opensciencegrid.org/products/dune/setup_dune.sh
 setup justin
@@ -100,7 +100,7 @@ lar --version || true
 # FHiCL setup
 # ============================================================
 
-FCL_FILE="${FCL_FILE:-$INPUT_TAR_DIR_LOCAL/selection/fcl/get_pds.fcl}"
+FCL_FILE="${FCL_FILE:-$INPUT_TAR_DIR_LOCAL/get_pds.fcl}"
 
 echo "==== FHiCL check ===="
 echo "FCL_FILE = $FCL_FILE"

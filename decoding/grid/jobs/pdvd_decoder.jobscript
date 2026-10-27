@@ -14,7 +14,7 @@ justin simple-workflow \
 
 EOF
 
-FCL_FILE="${FCL_FILE:-${INPUT_TAR_DIR_LOCAL}/selection/fcl/get_pds.fcl}"
+FCL_FILE="${FCL_FILE:-${INPUT_TAR_DIR_LOCAL}/get_pds.fcl}"
 
 echo "=== justIN ProtoDUNE-VD decoder test ==="
 echo "FCL_FILE = ${FCL_FILE}"

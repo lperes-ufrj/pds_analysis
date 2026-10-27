@@ -20,7 +20,7 @@ between the two on the same figure.
 By default the scan itself uses Francesca's template.
 
 Usage:
-    python deconvolve/sigma_scan.py [csv_path] [template]
+    python deconvolution/sigma_scan.py [csv_path] [template]
 
     csv_path   aggregate CSV from coincidence/selected_waveforms/ (asked if omitted)
     template   "francesca" (default) or a calibration run / "mine"
@@ -33,12 +33,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import matplotlib.pyplot as plt
 
-from calib.aux import paths
-from calib.aux.spe_template import ARRAY_LABEL, load_spe_template
-from calib.aux.waveform import TICK_NS, persistence_hist
-from deconvolve.core import (align_template, deconvolve_fft,
+from pds import paths
+from pds.spe_template import ARRAY_LABEL, load_spe_template
+from pds.waveform import TICK_NS, persistence_hist
+from deconvolution.core import (align_template, deconvolve_fft,
                              parse_coincidence_name, read_coincidence_csv)
-from deconvolve.deconvolve_coincidence import (COLUMNS, resolve_source,
+from deconvolution.deconvolve_coincidence import (COLUMNS, resolve_source,
                                                source_tag, template_label)
 
 DECONV_DIR = paths.DECONV_DIR

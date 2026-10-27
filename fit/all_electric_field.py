@@ -1,17 +1,17 @@
 """Fit every electric-field point of the scan in one go.
 
-Mirrors deconvolve/all_eletric_field.py, but on the fit side: it loads the
+Mirrors deconvolution/all_electric_field.py, but on the fit side: it loads the
 deconvolved waveforms of every run of a branch and fits them all, writing a
 single fit_results.txt with one row per (array, run).
 
 Usage:
-    python fit/all_eletric_field.py [template] [column] [branch]
+    python fit/all_electric_field.py [template] [column] [branch]
 
     template  "mine" or "francesca"          (asked if omitted)
     column    "mean", "median", "mode" or "both"  (asked if omitted)
     branch    "up" (default), "down" or "all"
 
-Outputs under fit/output/:
+Outputs under $PDS_OUTPUT/fit/ (default output/fit/):
     plots/<template>/<column>/fit_<array>_run<run>.png
     data/<template>/<column>/fit_results.txt
 """
@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from calib.aux import paths
-from calib.aux.runs import runs_of
+from pds import paths
+from pds.runs import runs_of
 from fit.fit import (COLUMNS, TEMPLATES, ask, fit_deconvolved,
                      load_deconvolved)
 

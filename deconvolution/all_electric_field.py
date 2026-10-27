@@ -4,16 +4,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from calib.aux.runs import runs_of
+from pds.runs import runs_of
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT    = REPO_ROOT / "deconvolve" / "deconvolve_coincidence.py"
+SCRIPT    = REPO_ROOT / "deconvolution" / "deconvolve_coincidence.py"
 COINC_DIR = REPO_ROOT / "coincidence" / "selected_waveforms"
 CHANNELS  = (2080, 2081)
 SUFFIX    = ("coinc_2030-2031-2040-2041_vs_2050-2051-2060-2061"
              "_save_2080-2081_window_10_ticks_min_amplitude_0_adc")
 
-# run map lives in calib/aux/runs.py (shared with fit/)
+# run map lives in pds/runs.py (shared with fit/)
 runs = {f"{kv} kV": int(run) for kv, run in runs_of("up")}
 
 template = str(input("Which template ('francesca' or 'mine')? "))

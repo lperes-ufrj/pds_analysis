@@ -15,12 +15,12 @@ Per channel, this script:
 
 The 'media' folder sits inside templates/ on purpose: it behaves as a
 pseudo-run, so using the average in the deconvolution is just a matter of
-setting TEMPLATE_RUNS in deconvolve/deconvolve.py to {2070: "media", ...}.
+setting TEMPLATE_RUNS in deconvolution/deconvolve.py to {2070: "media", ...}.
 
 It also overlays our templates with Francesca's, one PNG per SiPM array.
 
 Usage:
-    python calib/compare_templates.py
+    python calibration/compare_templates.py
 """
 import sys
 from pathlib import Path
@@ -30,9 +30,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import matplotlib.pyplot as plt
 
-from calib.aux import paths
-from calib.aux.spe_template import template_path
-from calib.aux.waveform import TICK_NS
+from pds import paths
+from pds.spe_template import template_path
+from pds.waveform import TICK_NS
 
 CALIB_DIR = paths.CALIB_DIR
 MEDIA_RUN = "media"          # pseudo-run name where the average is written
@@ -129,21 +129,12 @@ def compare_channel(ch, run_a, run_b, plot_dir, data_dir, report):
           f"residual RMS {rms_res:.4f} ADC")
     return average
 
-def compare_with_francesca():
-    time = np.arange(1024)*16/1000
-
-    folder = Path("/Users/feynman/Documents/phd/sag_analysis/calib/data/templates/francesca_template/")
-    m7_1_template = np.load(folder / "template_41236_M7_1.txt")
-    m7_2_template = np.load(folder / "template_41236_M7_2.txt")
-    m8_1_template = np.load(folder / "template_41256_M8_1.txt")
-    m8_2_template = np.load(folder / "template_41256_M8_2.txt")
-
 def compare_with_francesca(plot_dir):
     """Overlay our SPE template with Francesca's, one PNG per SiPM array.
 
     Both are in ADC on a 1024-sample window, so they are plotted as they are
     against time in us."""
-    fdir = paths.out(CALIB_DIR, "data", "templates", FRANCESCA_DIR)
+    fdir = paths.FRANCESCA_TEMPLATE_DIR
     time_us = np.arange(1024) * TICK_NS / 1000.0
 
     for label, (fname, run, ch) in FRANCESCA.items():

@@ -39,9 +39,11 @@ except ImportError as error:
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(REPO_DIR))
+from pds import paths  # noqa: E402
 DEFAULT_INPUT_PATTERN = "coincident_waveforms_fast_window_20_ticks_coinc_adc_4000_save_adc_4000.root"
-DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "deconvolved"
-TEMPLATE_DIR = SCRIPT_DIR / "templates_large_pulses"
+DEFAULT_OUTPUT_DIR = paths.DECONV_DIR / "large_pulses"
+TEMPLATE_DIR = paths.LARGE_PULSE_TEMPLATE_DIR
 
 # Saved-channel numbers used by coincidence_cuts.cpp.
 CHANNEL_NAMES = {

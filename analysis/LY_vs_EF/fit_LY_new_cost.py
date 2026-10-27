@@ -20,7 +20,7 @@ from iminuit import Minuit
 
 repo_dir = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(repo_dir))
-from src.src import calc_integral_and_error, read_txt_error_file
+from pds.integrals import calc_integral_and_error, read_txt_error_file
 
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 N_SAMPLES = 500_000

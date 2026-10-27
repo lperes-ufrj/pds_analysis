@@ -1,4 +1,5 @@
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import scipy as sci
@@ -10,8 +11,11 @@ from iminuit import Minuit
 from iminuit.cost import LeastSquares
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/fitting
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
 
 SAMPLE = 16  # ns
 
@@ -55,7 +59,7 @@ def coincidence_file(run):
             + PATTERN.format(ch=CHANNEL, run=run, scan=CFG['scan']))
 
 
-output_folder = os.path.join(SCRIPT_DIR, f'plots/{CHANNEL}')
+output_folder = os.path.join(OUT_DIR, f'plots/{CHANNEL}')
 
 for folder in ['templates', 'fft', 'deconv', 'fits', 'fit', 'parameters']:
     os.makedirs(f'{output_folder}/{folder}', exist_ok=True)
@@ -98,11 +102,11 @@ time_array = np.arange(0, 1024 * SAMPLE, SAMPLE) / 1000  # us
 frequency_array = np.fft.rfftfreq(len(time_array), SAMPLE / 1000)  # MHz
 
 template_m8_1 = np.loadtxt(
-    REPO_DIR + '/calib/output/data/templates/francesca_template/template_42156_M8_1.txt'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + '/template_42156_M8_1.txt'
 )
 
 template_m8_2 = np.loadtxt(
-    REPO_DIR + '/calib/output/data/templates/francesca_template/template_42156_M8_2.txt'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + '/template_42156_M8_2.txt'
 )
 
 plt.figure()
@@ -117,11 +121,11 @@ plt.close()
 # my templates
 
 template_2080 = np.load(
-    REPO_DIR + '/calib/output/data/templates/041256/template_2080.npy'
+    str(paths.TEMPLATES_DIR) + '/041256/template_2080.npy'
 )
 
 template_2081 = np.load(
-    REPO_DIR + '/calib/output/data/templates/041256/template_2081.npy'
+    str(paths.TEMPLATES_DIR) + '/041256/template_2081.npy'
 )
 
 plt.figure()
@@ -136,7 +140,7 @@ plt.close()
 # pareamento canal <-> template
 
 TEMPLATE = np.loadtxt(
-    REPO_DIR + f'/calib/output/data/templates/francesca_template/{CFG["template"]}'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["template"]}'
 )
 
 # templates proprios so foram feitos para 2080/2081; sem eles os plots de

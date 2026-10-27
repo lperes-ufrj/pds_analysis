@@ -7,9 +7,9 @@ returns the template normalized to 1 SPE.
 import numpy as np
 import matplotlib.pyplot as plt
 
-from calib.aux import functions as fc
-from calib.aux import paths
-from calib.aux.waveform import (robust_template, persistence_hist,
+from pds import functions as fc
+from pds import paths
+from pds.waveform import (robust_template, persistence_hist,
                                 persistence_plot)
 
 CALIB_DIR = paths.CALIB_DIR
@@ -105,14 +105,13 @@ FRANCESCA_FILES = {
 
 
 def template_path(run, channel):
-    """Canonical SPE template path -- this is what deconvolve/ reads."""
+    """Canonical SPE template path -- this is what deconvolution/ reads."""
     return paths.out(CALIB_DIR, "data", "templates", run) / f"template_{channel}.npy"
 
 
 def francesca_template_path(channel):
     """Path of Francesca's template for a channel."""
-    return (paths.out(CALIB_DIR, "data", "templates", FRANCESCA_DIR)
-            / FRANCESCA_FILES[channel])
+    return paths.FRANCESCA_TEMPLATE_DIR / FRANCESCA_FILES[channel]
 
 
 def load_spe_template(channel, source):

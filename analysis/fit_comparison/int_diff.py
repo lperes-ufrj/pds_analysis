@@ -7,11 +7,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import dunestyle.matplotlib as dunestyle
 import os
+import sys
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/physics
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
-FIT_DIR = os.path.join(REPO_DIR, 'fitting')               # saidas do fitting-bertolini-avg.py
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/analysis/fit_comparison
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+FIT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # saidas do fit/waveform_fits/fitting_bertolini_avg.py
+OUT_DIR = str(paths.OUTPUT_DIR / 'analysis' / 'fit_comparison')
 
 TXT = FIT_DIR + '/plots_bertolini_avg/M8/parameters/integrals_vs_field.txt'
 

@@ -22,8 +22,11 @@ import numpy as np
 import dunestyle.matplotlib as dunestyle  # noqa: F401  (estilo DUNE no import)
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/fitting
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
 
 SAMPLE = 16  # ns
 
@@ -159,7 +162,7 @@ def coincidence_file(run, ch):
                                           scan=CFG['subdir']))
 
 
-output_folder = os.path.join(SCRIPT_DIR, f'plots_deconvolution_preliminary/{MODULE}')
+output_folder = os.path.join(OUT_DIR, f'plots_deconvolution_preliminary/{MODULE}')
 
 for folder in ['templates', 'fft']:
     os.makedirs(f'{output_folder}/{folder}', exist_ok=True)
@@ -171,11 +174,11 @@ time_array = np.arange(0, 1024 * SAMPLE, SAMPLE) / 1000  # us
 frequency_array = np.fft.rfftfreq(len(time_array), SAMPLE / 1000)  # MHz
 
 template_m8_1 = np.loadtxt(
-    REPO_DIR + f'/calib/output/data/templates/francesca_template/{CFG["templates"][0]}'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["templates"][0]}'
 )
 
 template_m8_2 = np.loadtxt(
-    REPO_DIR + f'/calib/output/data/templates/francesca_template/{CFG["templates"][1]}'
+    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["templates"][1]}'
 )
 
 plt.figure()
@@ -190,11 +193,11 @@ plt.close()
 # my templates
 
 template_2080 = np.load(
-    REPO_DIR + '/calib/output/data/templates/041256/template_2080.npy'
+    str(paths.TEMPLATES_DIR) + '/041256/template_2080.npy'
 )
 
 template_2081 = np.load(
-    REPO_DIR + '/calib/output/data/templates/041256/template_2081.npy'
+    str(paths.TEMPLATES_DIR) + '/041256/template_2081.npy'
 )
 
 

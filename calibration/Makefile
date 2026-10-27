@@ -4,7 +4,7 @@ LDLIBS   := $(shell root-config --libs)
 
 TARGET := read_waveforms
 # Add the utility cpp file here!
-SRC    := read_waveforms.cpp aux/waveform_utils.cpp
+SRC    := read_waveforms.cpp waveform_utils.cpp
 
 $(TARGET): $(SRC)
 	$(CXX) $(CXXFLAGS) $(SRC) -o $(TARGET) $(LDLIBS)

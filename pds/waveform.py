@@ -1,6 +1,6 @@
 """Waveform helpers shared by calibration, deconvolution and fit.
 
-Extracted from the SPE template builder so that deconvolve/ and fit/ (at the
+Extracted from the SPE template builder so that deconvolution/ and fit/ (at the
 repository root) can use the same robust-average and persistence recipes
 without importing the template module.
 """

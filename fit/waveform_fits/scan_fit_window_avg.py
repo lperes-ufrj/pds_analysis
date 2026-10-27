@@ -28,6 +28,7 @@ principal (fitting-bertolini-avg.py e quem gera os txt usados no resto da
 analise).
 """
 import os
+import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -37,8 +38,11 @@ from iminuit import Minuit
 from iminuit.cost import LeastSquares
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # sag_analysis/fitting
-REPO_DIR = os.path.dirname(SCRIPT_DIR)                    # sag_analysis
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
+REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
+sys.path.insert(0, REPO_DIR)
+from pds import paths  # noqa: E402
+OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
 
 SAMPLE = 16  # ns
 time_array = np.arange(0, 1024 * SAMPLE, SAMPLE) / 1000  # us
@@ -85,7 +89,7 @@ LIMITS = {
 INITIAL_GUESSES = dict(t0=T0_CENTER, Aslow=1.16, Afast=17.1, tau_slow=1.4,
                         tau_fast=TAU_FAST_FIXED)
 
-OUTDIR = os.path.join(SCRIPT_DIR, 'debug_scan_fitwindow') + '/'
+OUTDIR = os.path.join(OUT_DIR, 'debug_scan_fitwindow') + '/'
 os.makedirs(OUTDIR, exist_ok=True)
 
 
@@ -147,7 +151,7 @@ def load_module_waveform(mod):
     waveform = waveform / waveform.max()
 
     templates = [np.loadtxt(
-        REPO_DIR + '/calib/output/data/templates/francesca_template/' + t
+        str(paths.FRANCESCA_TEMPLATE_DIR) + '/' + t
     ) for t in cfg['templates']]
     kernel = 0.5 * sum(make_causal_kernel(t) for t in templates)
 

@@ -29,6 +29,15 @@ std::string trimIntervalLine(const std::string &text)
     return text.substr(first, last - first + 1);
 }
 
+std::vector<std::string> splitWhitespaceFields(const std::string &line)
+{
+    std::istringstream input(line);
+    std::vector<std::string> fields;
+    std::string field;
+    while (input >> field) fields.push_back(field);
+    return fields;
+}
+
 }  // namespace
 
 WaveformAnalyzer::WaveformAnalyzer(const std::string &ini_file)
@@ -437,4 +446,245 @@ double WaveformAnalyzer::fprompt(
     }
     if (total_charge == 0.0) return 0.0;
     return prompt_charge / total_charge;
+}
+
+// --------------------------------------------- normalized-rate amplitude cut
+
+NormRateAdcThresholds readNormRateAdcThresholds(const std::string &threshold_file)
+{
+    std::ifstream input(threshold_file);
+    if (!input) {
+        throw std::runtime_error(
+            "Could not open normalized-rate ADC-threshold file: "
+            + threshold_file
+        );
+    }
+
+    NormRateAdcThresholds thresholds;
+    bool found_header = false;
+    std::size_t channel_column = 0;
+    std::size_t target_frequency_column = 0;
+    std::size_t threshold_column = 0;
+    std::size_t line_number = 0;
+    std::string line;
+
+    while (std::getline(input, line)) {
+        ++line_number;
+        line = trimIntervalLine(line);
+        if (line.empty()) continue;
+
+        const bool comment = line.front() == '#';
+        if (comment) line = trimIntervalLine(line.substr(1));
+        if (line.empty()) continue;
+
+        const auto fields = splitWhitespaceFields(line);
+        if (!found_header) {
+            const auto channel = std::find(fields.begin(), fields.end(), "channel");
+            const auto target_frequency = std::find(
+                fields.begin(), fields.end(), "target_frequency_khz"
+            );
+            const auto threshold = std::find(fields.begin(), fields.end(), "threshold_adc");
+            if (channel != fields.end() && target_frequency != fields.end()
+                && threshold != fields.end()) {
+                channel_column = static_cast<std::size_t>(
+                    std::distance(fields.begin(), channel)
+                );
+                target_frequency_column = static_cast<std::size_t>(
+                    std::distance(fields.begin(), target_frequency)
+                );
+                threshold_column = static_cast<std::size_t>(
+                    std::distance(fields.begin(), threshold)
+                );
+                found_header = true;
+                continue;
+            }
+            if (comment) continue;
+            throw std::runtime_error(
+                "Normalized-rate ADC-threshold file must contain 'channel', "
+                "'target_frequency_khz', and 'threshold_adc' "
+                "columns: " + threshold_file
+            );
+        }
+
+        if (comment) continue;
+        const std::size_t required_column = std::max(
+            {channel_column, target_frequency_column, threshold_column}
+        );
+        if (fields.size() <= required_column) {
+            throw std::runtime_error(
+                "Malformed normalized-rate ADC-threshold row "
+                + std::to_string(line_number)
+                + " in " + threshold_file
+            );
+        }
+
+        unsigned int channel = 0;
+        NormRateAdcThreshold rate_threshold;
+        try {
+            const std::string &channel_text = fields[channel_column];
+            if (!channel_text.empty() && channel_text.front() == '-') {
+                throw std::invalid_argument("negative channel");
+            }
+            std::size_t consumed = 0;
+            const unsigned long long parsed_channel = std::stoull(channel_text, &consumed);
+            if (consumed != channel_text.size()
+                || parsed_channel > std::numeric_limits<unsigned int>::max()) {
+                throw std::out_of_range("invalid channel");
+            }
+            channel = static_cast<unsigned int>(parsed_channel);
+
+            const std::string &target_frequency_text = fields[target_frequency_column];
+            consumed = 0;
+            rate_threshold.target_frequency_khz = std::stod(
+                target_frequency_text, &consumed
+            );
+            if (consumed != target_frequency_text.size()) {
+                throw std::invalid_argument("invalid target frequency");
+            }
+
+            const std::string &threshold_text = fields[threshold_column];
+            consumed = 0;
+            rate_threshold.threshold_adc = std::stod(threshold_text, &consumed);
+            if (consumed != threshold_text.size()) {
+                throw std::invalid_argument("invalid threshold");
+            }
+        } catch (const std::exception &) {
+            throw std::runtime_error(
+                "Invalid normalized-rate ADC-threshold values on row "
+                + std::to_string(line_number)
+                + " in " + threshold_file
+            );
+        }
+
+        if (!thresholds.emplace(channel, rate_threshold).second) {
+            throw std::runtime_error(
+                "Duplicate normalized-rate ADC-threshold channel "
+                + std::to_string(channel)
+                + " in " + threshold_file
+            );
+        }
+    }
+
+    if (!found_header) {
+        throw std::runtime_error(
+            "Normalized-rate ADC-threshold file has no header: "
+            + threshold_file
+        );
+    }
+    return thresholds;
+}
+
+double baselineToPeakAmplitude(const std::vector<short> &adc)
+{
+    const std::size_t baseline_stop = std::min(RATE_BASELINE_LAST_SAMPLE, adc.size());
+    const std::size_t signal_stop = std::min(RATE_SIGNAL_LAST_SAMPLE, adc.size());
+    if (RATE_BASELINE_FIRST_SAMPLE >= baseline_stop || RATE_SIGNAL_FIRST_SAMPLE >= signal_stop) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    const double baseline_sum = std::accumulate(
+        adc.begin() + static_cast<std::ptrdiff_t>(RATE_BASELINE_FIRST_SAMPLE),
+        adc.begin() + static_cast<std::ptrdiff_t>(baseline_stop),
+        0.0
+    );
+    const double baseline = baseline_sum
+        / static_cast<double>(baseline_stop - RATE_BASELINE_FIRST_SAMPLE);
+    const auto peak = std::max_element(
+        adc.begin() + static_cast<std::ptrdiff_t>(RATE_SIGNAL_FIRST_SAMPLE),
+        adc.begin() + static_cast<std::ptrdiff_t>(signal_stop)
+    );
+    return static_cast<double>(*peak) - baseline;
+}
+
+bool passesNormRateAdcThreshold(double amplitude, double threshold)
+{
+    return std::isfinite(amplitude) && amplitude >= threshold;
+}
+
+// ------------------------------------------------- waveform quality cuts
+
+namespace {
+
+double maximumAbsoluteAmplitudeInRegion(
+    const std::vector<short> &adc,
+    const WaveformAnalyzer &analyzer,
+    unsigned int channel,
+    const std::string &name,
+    double baseline
+)
+{
+    auto [start, stop] = analyzer.interval(channel, name);
+    start = std::max(0, std::min(start, static_cast<int>(adc.size())));
+    stop = std::max(start, std::min(stop, static_cast<int>(adc.size())));
+    if (start == stop) throw std::runtime_error("Empty " + name + " interval");
+
+    double amplitude = 0.0;
+    for (int i = start; i < stop; ++i) {
+        amplitude = std::max(
+            amplitude,
+            std::abs(static_cast<double>(adc[i]) - baseline)
+        );
+    }
+    return amplitude;
+}
+
+double maximumInRegion(
+    const std::vector<short> &adc,
+    const WaveformAnalyzer &analyzer,
+    unsigned int channel,
+    const std::string &name
+)
+{
+    auto [start, stop] = analyzer.interval(channel, name);
+    start = std::max(0, std::min(start, static_cast<int>(adc.size())));
+    stop = std::max(start, std::min(stop, static_cast<int>(adc.size())));
+    if (start == stop) throw std::runtime_error("Empty " + name + " interval");
+    return *std::max_element(adc.begin() + start, adc.begin() + stop);
+}
+
+
+double fullRangeAmplitude(const std::vector<short> &adc, double baseline)
+{
+    if (adc.empty()) {
+        throw std::runtime_error("Cannot calculate amplitude from an empty waveform");
+    }
+    return static_cast<double>(*std::max_element(adc.begin(), adc.end())) - baseline;
+}
+
+}  // namespace
+
+Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
+    const std::vector<short> &adc,
+    unsigned int channel,
+    double baseline,
+    const WaveformAnalyzer &analyzer,
+    double max_auxiliary_amplitude,
+    double max_full_range_amplitude
+)
+{
+    // Keep these calculations and strict boundaries synchronized with the old
+    // coin_1p0v_code selection.  In particular, these are positive maxima
+    // above the noise median (not absolute excursions), and equality passes.
+    const double noise_amplitude = maximumInRegion(
+        adc, analyzer, channel, "noise"
+    ) - baseline;
+    const double post_signal_amplitude = maximumAbsoluteAmplitudeInRegion(
+    adc, analyzer, channel, "post_signal", baseline
+    );
+    const bool fails_noise = noise_amplitude > max_auxiliary_amplitude;
+    const bool fails_post_signal = post_signal_amplitude > max_auxiliary_amplitude;
+    const double amplitude = fullRangeAmplitude(adc, baseline);
+    const bool fails_full_range_amplitude = amplitude > max_full_range_amplitude;
+    const PeakSearchResult peak = analyzer.findPeak(adc, channel);
+    const bool fails_primary_peak = peak.primary_outside_signal_region;
+    const bool fails_additional_peak = peak.additional_outside_signal_region;
+
+    return {
+        fails_noise,
+        fails_post_signal,
+        fails_full_range_amplitude,
+        fails_primary_peak,
+        fails_additional_peak,
+        peak.found
+    };
 }

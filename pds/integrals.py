@@ -29,13 +29,14 @@ def read_txt_error_file(sample_label,channels):
     txt_suffix = f"{sample_label}.txt"
 
     txt_files = sorted(
-        path_waveforms.glob(f"selection_cuts_coincidence_scan_run_*_{txt_suffix}")
+        # coincidence_scan_run_ (plot_wfs_coincidence) or only_selection_scan_run_
+        path_waveforms.glob(f"selection_cuts_*_scan_run_*_{txt_suffix}")
     )
     
     y_err_runs = {}
     runs_files = set()
     for txt_file in txt_files:
-        match = re.search(r"selection_cuts_coincidence_scan_run_(\d+)", txt_file.name)
+        match = re.search(r"selection_cuts_(?:coincidence|only_selection)_scan_run_(\d+)", txt_file.name)
         if match:
             run = int(match.group(1))
             runs_files.add((run, txt_file))

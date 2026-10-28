@@ -75,14 +75,6 @@ struct Candidate {
 
 using EventChannels = std::unordered_map<unsigned int, std::vector<WaveformRecord>>;
 using WaveformKey = std::tuple<int, unsigned int, int>;
-struct NormRateAdcThreshold {
-    double target_frequency_khz = std::numeric_limits<double>::quiet_NaN();
-    double threshold_adc = std::numeric_limits<double>::quiet_NaN();
-};
-
-using NormRateAdcThresholds =
-    std::unordered_map<unsigned int, NormRateAdcThreshold>;
-
 struct RunStatistics {
     Long64_t tree_entries = 0;
     std::size_t unique_input_events = 0;
@@ -99,12 +91,6 @@ struct RunStatistics {
     std::size_t selected_events = 0;
     std::size_t selected_waveforms = 0;
 };
-
-// Keep these half-open ranges synchronized with analysis/rate_analysis.py.
-constexpr std::size_t BASELINE_FIRST_SAMPLE = 0;
-constexpr std::size_t BASELINE_LAST_SAMPLE = 50;
-constexpr std::size_t SIGNAL_FIRST_SAMPLE = 50;
-constexpr std::size_t SIGNAL_LAST_SAMPLE = 180;
 
 std::string trim(const std::string &text)
 {
@@ -231,139 +217,6 @@ Arguments parseArguments(int argc, char **argv)
     return args;
 }
 
-std::vector<std::string> splitFields(const std::string &line)
-{
-    std::istringstream input(line);
-    std::vector<std::string> fields;
-    std::string field;
-    while (input >> field) fields.push_back(field);
-    return fields;
-}
-
-NormRateAdcThresholds readNormRateAdcThresholds(const fs::path &threshold_file)
-{
-    std::ifstream input(threshold_file);
-    if (!input) {
-        throw std::runtime_error(
-            "Could not open normalized-rate ADC-threshold file: "
-            + threshold_file.string()
-        );
-    }
-
-    NormRateAdcThresholds thresholds;
-    bool found_header = false;
-    std::size_t channel_column = 0;
-    std::size_t target_frequency_column = 0;
-    std::size_t threshold_column = 0;
-    std::size_t line_number = 0;
-    std::string line;
-
-    while (std::getline(input, line)) {
-        ++line_number;
-        line = trim(line);
-        if (line.empty()) continue;
-
-        const bool comment = line.front() == '#';
-        if (comment) line = trim(line.substr(1));
-        if (line.empty()) continue;
-
-        const auto fields = splitFields(line);
-        if (!found_header) {
-            const auto channel = std::find(fields.begin(), fields.end(), "channel");
-            const auto target_frequency = std::find(
-                fields.begin(), fields.end(), "target_frequency_khz"
-            );
-            const auto threshold = std::find(fields.begin(), fields.end(), "threshold_adc");
-            if (channel != fields.end() && target_frequency != fields.end()
-                && threshold != fields.end()) {
-                channel_column = static_cast<std::size_t>(
-                    std::distance(fields.begin(), channel)
-                );
-                target_frequency_column = static_cast<std::size_t>(
-                    std::distance(fields.begin(), target_frequency)
-                );
-                threshold_column = static_cast<std::size_t>(
-                    std::distance(fields.begin(), threshold)
-                );
-                found_header = true;
-                continue;
-            }
-            if (comment) continue;
-            throw std::runtime_error(
-                "Normalized-rate ADC-threshold file must contain 'channel', "
-                "'target_frequency_khz', and 'threshold_adc' "
-                "columns: " + threshold_file.string()
-            );
-        }
-
-        if (comment) continue;
-        const std::size_t required_column = std::max(
-            {channel_column, target_frequency_column, threshold_column}
-        );
-        if (fields.size() <= required_column) {
-            throw std::runtime_error(
-                "Malformed normalized-rate ADC-threshold row "
-                + std::to_string(line_number)
-                + " in " + threshold_file.string()
-            );
-        }
-
-        unsigned int channel = 0;
-        NormRateAdcThreshold rate_threshold;
-        try {
-            const std::string &channel_text = fields[channel_column];
-            if (!channel_text.empty() && channel_text.front() == '-') {
-                throw std::invalid_argument("negative channel");
-            }
-            std::size_t consumed = 0;
-            const unsigned long long parsed_channel = std::stoull(channel_text, &consumed);
-            if (consumed != channel_text.size()
-                || parsed_channel > std::numeric_limits<unsigned int>::max()) {
-                throw std::out_of_range("invalid channel");
-            }
-            channel = static_cast<unsigned int>(parsed_channel);
-
-            const std::string &target_frequency_text = fields[target_frequency_column];
-            consumed = 0;
-            rate_threshold.target_frequency_khz = std::stod(
-                target_frequency_text, &consumed
-            );
-            if (consumed != target_frequency_text.size()) {
-                throw std::invalid_argument("invalid target frequency");
-            }
-
-            const std::string &threshold_text = fields[threshold_column];
-            consumed = 0;
-            rate_threshold.threshold_adc = std::stod(threshold_text, &consumed);
-            if (consumed != threshold_text.size()) {
-                throw std::invalid_argument("invalid threshold");
-            }
-        } catch (const std::exception &) {
-            throw std::runtime_error(
-                "Invalid normalized-rate ADC-threshold values on row "
-                + std::to_string(line_number)
-                + " in " + threshold_file.string()
-            );
-        }
-
-        if (!thresholds.emplace(channel, rate_threshold).second) {
-            throw std::runtime_error(
-                "Duplicate normalized-rate ADC-threshold channel "
-                + std::to_string(channel)
-                + " in " + threshold_file.string()
-            );
-        }
-    }
-
-    if (!found_header) {
-        throw std::runtime_error(
-            "Normalized-rate ADC-threshold file has no header: "
-            + threshold_file.string()
-        );
-    }
-    return thresholds;
-}
-
 std::vector<unsigned int> selectChannelsWithFiniteRateThresholds(
     Arguments &args,
     const NormRateAdcThresholds &thresholds
@@ -400,33 +253,6 @@ std::vector<unsigned int> selectChannelsWithFiniteRateThresholds(
 
     args.save = std::move(selected_channels);
     return skipped_channels;
-}
-
-double baselineToPeakAmplitude(const std::vector<short> &adc)
-{
-    const std::size_t baseline_stop = std::min(BASELINE_LAST_SAMPLE, adc.size());
-    const std::size_t signal_stop = std::min(SIGNAL_LAST_SAMPLE, adc.size());
-    if (BASELINE_FIRST_SAMPLE >= baseline_stop || SIGNAL_FIRST_SAMPLE >= signal_stop) {
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-
-    const double baseline_sum = std::accumulate(
-        adc.begin() + static_cast<std::ptrdiff_t>(BASELINE_FIRST_SAMPLE),
-        adc.begin() + static_cast<std::ptrdiff_t>(baseline_stop),
-        0.0
-    );
-    const double baseline = baseline_sum
-        / static_cast<double>(baseline_stop - BASELINE_FIRST_SAMPLE);
-    const auto peak = std::max_element(
-        adc.begin() + static_cast<std::ptrdiff_t>(SIGNAL_FIRST_SAMPLE),
-        adc.begin() + static_cast<std::ptrdiff_t>(signal_stop)
-    );
-    return static_cast<double>(*peak) - baseline;
-}
-
-bool passesNormRateAdcThreshold(double amplitude, double threshold)
-{
-    return std::isfinite(amplitude) && amplitude >= threshold;
 }
 
 std::vector<std::string> readInputList(const fs::path &input_list)
@@ -929,7 +755,7 @@ int main(int argc, char **argv)
         NormRateAdcThresholds norm_rate_adc_thresholds;
         if (!args.norm_rate_adc_threshold_file.empty()) {
             norm_rate_adc_thresholds = readNormRateAdcThresholds(
-                args.norm_rate_adc_threshold_file
+                args.norm_rate_adc_threshold_file.string()
             );
             skipped_save_channels = selectChannelsWithFiniteRateThresholds(
                 args,

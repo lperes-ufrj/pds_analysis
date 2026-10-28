@@ -12,7 +12,8 @@ and fits every field of pds.runs.FIT_SCAN, as before. The options below are
 what pipeline/run_pipeline.sh uses to fit one cut set:
 
     --selection-dir DIR   folder with the channel_<ch>_coincidence_scan_*.csv
-    --coinc-tag TAG       run_coincidence tag in those file names
+                          (or channel_<ch>_only_selection_scan_*.csv)
+    --coinc-tag TAG       sample tag in those file names
     --run-set NAME        "full" (default) or "reduced" (pds/runs.py)
     --fields LIST         comma-separated HV list, overrides --run-set
     --out-dir DIR         output folder (default $PDS_OUTPUT/fit/waveform_fits)
@@ -110,6 +111,7 @@ SCAN_LOW = '20260909_213507'
 # nome do arquivo na rodada; {ch}, {run} e {scan} sao preenchidos em
 # coincidence_file() ({scan} = o proprio subdir).
 PATTERN_NEW = 'channel_{ch}_coincidence_scan_run_0{run}_{scan}.csv'
+PATTERN_ONLY_SELECTION = 'channel_{ch}_only_selection_scan_run_0{run}_{scan}.csv'
 
 MODULE_CONFIG = {
     # fit_max: teto da janela de ajuste (FIT_MIN continua fixo em 0.25 us
@@ -191,10 +193,13 @@ CFG = MODULE_CONFIG[MODULE]
 def coincidence_file(run, ch):
     if ARGS.selection_dir:
         # cut set from pipeline/run_pipeline.sh: the folder holds one cut
-        # set, the file names carry the run_coincidence tag
+        # set, the file names carry its tag. plot_wfs_coincidence writes
+        # PATTERN_NEW, only_selection (no coincidence) PATTERN_ONLY_SELECTION.
         tag = ARGS.coinc_tag or os.path.basename(os.path.normpath(ARGS.selection_dir))
-        return os.path.join(ARGS.selection_dir,
-                            PATTERN_NEW.format(ch=ch, run=run, scan=tag))
+        candidates = [os.path.join(ARGS.selection_dir,
+                                   pattern.format(ch=ch, run=run, scan=tag))
+                      for pattern in (PATTERN_NEW, PATTERN_ONLY_SELECTION)]
+        return next((c for c in candidates if os.path.isfile(c)), candidates[0])
 
     sub = f'{CFG["subdir"]}/' if CFG['subdir'] else ''
 

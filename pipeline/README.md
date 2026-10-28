@@ -2,6 +2,7 @@
 
 Runs coincidence → waveform selection → mean-waveform fit for one **cut set**,
 on a reduced set of 7 fields (fast, for validating cuts) or on the full scan.
+A cut set with `MODE=single` skips the coincidence (see below).
 
 ```bash
 pipeline/run_pipeline.sh baseline                  # 7 fields: 0 10 20 40 100 205 292 kV
@@ -33,6 +34,7 @@ Copy [`cutsets/baseline.env`](cutsets/baseline.env) (the production settings) an
 | `MAX_AUX_ADC` | selection | noise and post-signal amplitude limit |
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; must be saved by `TRIGGER` (`low` → M5 M6, `m8` → M8) |
+| `MODE` | all | `coincidence` (default) or `single` |
 
 Peak-finder thresholds (used by the "peak outside the signal window" cuts)
 go in the INI file; without the section the defaults are kept:
@@ -42,6 +44,39 @@ go in the INI file; without the section the defaults are kept:
 min_height_adc = 500     ; significant peak: height >= max(min_height_adc,
 min_height_sigma = 10    ;                    min_height_sigma * noise RMS)
 ```
+
+## Without coincidence (`MODE=single`)
+
+[`cutsets/single_m8.env`](cutsets/single_m8.env) selects every waveform of
+`CHANNELS` with [`bin/only_selection`](../coincidence/only_selection.cpp),
+applying the same quality cuts as `plot_wfs_coincidence`: the two programs
+share the cut code in `coincidence_lib.cpp`. Compare it with `baseline_m8` to
+see what the coincidence requirement changes:
+
+```bash
+pipeline/run_pipeline.sh single_m8
+python3 pipeline/compare_cutsets.py baseline_m8 single_m8
+python analysis/LY_vs_EF/fit_LY_wo_template.py single_m8 --channels 2080 2081 --batch
+```
+
+| Variable | Meaning |
+|---|---|
+| `CHANNELS` | channels to select; each module in `MODULES` needs both its channels (M5 2050 2051, M6 2060 2061, M8 2080 2081) |
+| `RATE_THRESHOLDS` | same rate-equalization amplitude cut that `run_coincidence` applies to saved channels; empty = none |
+| `INTERVALS`, `MAX_AUX_ADC`, `MAX_FULL_RANGE_ADC` | as in coincidence mode |
+| `REQUIRE_PEAK` | `1` also rejects waveforms without a significant peak (default `0`, as in `plot_wfs_coincidence`) |
+| `MAX_WAVEFORMS` | per channel and run, after the rate cut, in file order; `0` = all (default) |
+
+The coincidence stage is skipped. The tag is `s_<channels>[_n<MAX_WAVEFORMS>]_r<rate>_<hash>`,
+and the files are labelled `only_selection_scan_run_RUN_TAG`, so the fit,
+`compare_cutsets.py`, the light-yield script and `pds/integrals.py` read them
+like the coincidence ones. The efficiency in `compare_cutsets.py` is relative
+to the waveforms entering the quality cuts, after the rate cut.
+
+All selected waveforms are held in memory for the median and percentiles:
+about 2 kB each, so around 300 MB per channel and run at the M8 rates. Use
+`MAX_WAVEFORMS` to cap that. The before-cuts density plot shows the first
+20000 waveforms per channel.
 
 ## Caching
 
@@ -68,6 +103,7 @@ min_height_sigma = 10    ;                    min_height_sigma * noise RMS)
 | `coincidence/selected_waveforms/TAG/mean_median_waveforms_*.png` | mean, median, 16–84 % band |
 | `coincidence/selected_waveforms/TAG/channel_<ch>_*.csv` | mean waveform per channel and run |
 | `coincidence/selected_waveforms/TAG/fprompt_*.csv` | prompt fraction per waveform |
+| `coincidence/selected_waveforms/TAG/all_waveforms_*_{from_coincidence,before_cuts,final_selection}.png` | waveform density before and after the cuts |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/plots_bertolini_avg/MODULE/` | fit plots and `parameters/*.txt` |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/selection/` | cut flow the fit was made on |
 | `$PDS_OUTPUT/pipeline/compare/RUNSET/` | `compare_cutsets.py` figures and efficiency table |

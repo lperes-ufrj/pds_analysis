@@ -106,23 +106,6 @@ struct WaveformSelections {
     CutStatistics cuts;
 };
 
-// Compatibility contract: these are exactly the five rejection flags used by
-// coin_1p0v_code/plot_wfs_coincidence.cpp.  Plotting and reporting additions
-// must consume this decision; they must not add acceptance criteria of their own.
-struct Coin1p0vSelectionDecision {
-    bool fails_noise = false;
-    bool fails_post_signal = false;
-    bool fails_full_range_amplitude = false;
-    bool fails_primary_peak = false;
-    bool fails_additional_peak = false;
-
-    bool rejected() const
-    {
-        return fails_noise || fails_post_signal || fails_full_range_amplitude
-            || fails_primary_peak || fails_additional_peak;
-    }
-};
-
 std::string trim(const std::string &text)
 {
     const auto first = text.find_first_not_of(" \t\r\n");
@@ -380,86 +363,6 @@ std::vector<LocatedWaveform> locateSelectedEntries(
         );
     }
     return located;
-}
-
-double maximumAbsoluteAmplitudeInRegion(
-    const std::vector<short> &adc,
-    const WaveformAnalyzer &analyzer,
-    unsigned int channel,
-    const std::string &name,
-    double baseline
-)
-{
-    auto [start, stop] = analyzer.interval(channel, name);
-    start = std::max(0, std::min(start, static_cast<int>(adc.size())));
-    stop = std::max(start, std::min(stop, static_cast<int>(adc.size())));
-    if (start == stop) throw std::runtime_error("Empty " + name + " interval");
-
-    double amplitude = 0.0;
-    for (int i = start; i < stop; ++i) {
-        amplitude = std::max(
-            amplitude,
-            std::abs(static_cast<double>(adc[i]) - baseline)
-        );
-    }
-    return amplitude;
-}
-
-double maximumInRegion(
-    const std::vector<short> &adc,
-    const WaveformAnalyzer &analyzer,
-    unsigned int channel,
-    const std::string &name
-)
-{
-    auto [start, stop] = analyzer.interval(channel, name);
-    start = std::max(0, std::min(start, static_cast<int>(adc.size())));
-    stop = std::max(start, std::min(stop, static_cast<int>(adc.size())));
-    if (start == stop) throw std::runtime_error("Empty " + name + " interval");
-    return *std::max_element(adc.begin() + start, adc.begin() + stop);
-}
-
-double fullRangeAmplitude(const std::vector<short> &adc, double baseline)
-{
-    if (adc.empty()) {
-        throw std::runtime_error("Cannot calculate amplitude from an empty waveform");
-    }
-    return static_cast<double>(*std::max_element(adc.begin(), adc.end())) - baseline;
-}
-
-Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
-    const std::vector<short> &adc,
-    unsigned int channel,
-    double baseline,
-    const WaveformAnalyzer &analyzer,
-    double max_auxiliary_amplitude,
-    double max_full_range_amplitude
-)
-{
-    // Keep these calculations and strict boundaries synchronized with the old
-    // coin_1p0v_code selection.  In particular, these are positive maxima
-    // above the noise median (not absolute excursions), and equality passes.
-    const double noise_amplitude = maximumInRegion(
-        adc, analyzer, channel, "noise"
-    ) - baseline;
-    const double post_signal_amplitude = maximumAbsoluteAmplitudeInRegion(
-    adc, analyzer, channel, "post_signal", baseline
-    );
-    const bool fails_noise = noise_amplitude > max_auxiliary_amplitude;
-    const bool fails_post_signal = post_signal_amplitude > max_auxiliary_amplitude;
-    const double amplitude = fullRangeAmplitude(adc, baseline);
-    const bool fails_full_range_amplitude = amplitude > max_full_range_amplitude;
-    const PeakSearchResult peak = analyzer.findPeak(adc, channel);
-    const bool fails_primary_peak = peak.primary_outside_signal_region;
-    const bool fails_additional_peak = peak.additional_outside_signal_region;
-
-    return {
-        fails_noise,
-        fails_post_signal,
-        fails_full_range_amplitude,
-        fails_primary_peak,
-        fails_additional_peak
-    };
 }
 
 WaveformSelections loadWaveforms(

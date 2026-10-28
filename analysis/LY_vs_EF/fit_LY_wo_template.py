@@ -8,7 +8,8 @@ Usage:
     SAMPLE   a pipeline cut-set name (pipeline/cutsets/NAME.env, resolved to
              its coincidence tag) or a sample label, i.e. a folder name in
              coincidence/selected_waveforms/ (pipeline tags such as
-             c_m8_w10_a0_r_292kV_888e6582, or older YYYYMMDD_HHMMSS rounds).
+             c_m8_w10_a0_r_292kV_888e6582, single-channel samples s_..., or
+             older YYYYMMDD_HHMMSS rounds).
              Several samples are combined. Default: SAMPLE_LABELS below.
     --channels  channels to average (default: CHANNELS below)
     --out       output folder (default $PDS_OUTPUT/analysis/LY_vs_EF/<samples>)
@@ -273,7 +274,9 @@ def calculate_study_XA(csv_suffix, channel, y_err_runs,path_waveforms):
     charge_records = []
     ch_found = 0
     for csv_file in csv_files:
-        match = re.search( r"channel_(\d+)_coincidence_scan_run_(\d+)", csv_file.name)
+        # coincidence_scan_run_ (plot_wfs_coincidence) or
+        # only_selection_scan_run_ (only_selection, no coincidence)
+        match = re.search(r"channel_(\d+)_(?:coincidence|only_selection)_scan_run_(\d+)", csv_file.name)
         
         if not match:
             continue

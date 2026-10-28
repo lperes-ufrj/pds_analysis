@@ -1,3 +1,31 @@
+# Selection without coincidence
+
+`only_selection.cpp` (`bin/only_selection`) takes every waveform of the
+channels given with `--channel` and applies the quality cuts of
+`plot_wfs_coincidence` (the shared `evaluateCoin1p0vSelection` in
+`coincidence_lib.cpp`). Its outputs have the same names and formats, with
+the label `only_selection_scan_run_RUN_TAG`:
+
+```bash
+make -C coincidence only_selection
+bin/only_selection coincidence/input_lists/input_run039510.txt \
+  --channel 2080 --channel 2081 --tag my_test \
+  --norm-rate-adc-threshold-file analysis/RateAnalysis_data_292kV/equalized_run_039510_thresholds.txt
+```
+
+Outputs go to `coincidence/selected_waveforms/TAG/` unless `--output-dir` is
+given. Options beyond those of `plot_wfs_coincidence`:
+
+| Option | Effect |
+|---|---|
+| `--norm-rate-adc-threshold-file FILE` | rate-equalization amplitude cut of `run_coincidence`; channels without a finite threshold are skipped |
+| `--require-peak` | also reject waveforms without a significant peak |
+| `--max-waveforms N` | at most N waveforms per channel, after the rate cut |
+| `--max-plot-waveforms N` | waveforms in the before-cuts density plot (default 20000) |
+
+The cut summary adds the rate-cut counts and a per-channel table. In the
+pipeline, use a cut set with `MODE=single` (see `pipeline/README.md`).
+
 # Peak finding without coincidence
 
 `run_peak_finder.cpp` reads the `WaveformTree` trees in an input list, restricts

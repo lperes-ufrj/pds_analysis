@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -77,5 +78,57 @@ private:
 };
 
 std::unique_ptr<TChain> createChain(const std::vector<std::string> &files);
+
+// Waveform quality cuts shared by plot_wfs_coincidence and only_selection.
+// Compatibility contract: these are exactly the five rejection flags used by
+// coin_1p0v_code/plot_wfs_coincidence.cpp.  Plotting and reporting additions
+// must consume this decision; they must not add acceptance criteria of their own.
+struct Coin1p0vSelectionDecision {
+    bool fails_noise = false;
+    bool fails_post_signal = false;
+    bool fails_full_range_amplitude = false;
+    bool fails_primary_peak = false;
+    bool fails_additional_peak = false;
+    // Informational, not one of the five cuts: a significant peak was found.
+    bool peak_found = false;
+
+    bool rejected() const
+    {
+        return fails_noise || fails_post_signal || fails_full_range_amplitude
+            || fails_primary_peak || fails_additional_peak;
+    }
+};
+
+Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
+    const std::vector<short> &adc,
+    unsigned int channel,
+    double baseline,
+    const WaveformAnalyzer &analyzer,
+    double max_auxiliary_amplitude,
+    double max_full_range_amplitude
+);
+
+// Normalized-rate amplitude cut (thresholds from analysis/rate_analysis.py),
+// used by run_coincidence and only_selection. Amplitude =
+// max(ADC[50:180]) - mean(ADC[0:50]); keep these half-open ranges
+// synchronized with analysis/rate_analysis.py.
+inline constexpr std::size_t RATE_BASELINE_FIRST_SAMPLE = 0;
+inline constexpr std::size_t RATE_BASELINE_LAST_SAMPLE = 50;
+inline constexpr std::size_t RATE_SIGNAL_FIRST_SAMPLE = 50;
+inline constexpr std::size_t RATE_SIGNAL_LAST_SAMPLE = 180;
+
+struct NormRateAdcThreshold {
+    double target_frequency_khz = std::numeric_limits<double>::quiet_NaN();
+    double threshold_adc = std::numeric_limits<double>::quiet_NaN();
+};
+
+using NormRateAdcThresholds =
+    std::unordered_map<unsigned int, NormRateAdcThreshold>;
+
+// Reads an equalized_run_RUN_thresholds.txt file (whitespace-separated
+// columns channel, target_frequency_khz, threshold_adc).
+NormRateAdcThresholds readNormRateAdcThresholds(const std::string &threshold_file);
+double baselineToPeakAmplitude(const std::vector<short> &adc);
+bool passesNormRateAdcThreshold(double amplitude, double threshold);
 
 #endif

@@ -193,7 +193,7 @@ if has "$STAGES" coincidence; then
             --channels-to-save $SAVE \
             --window-ticks "$WINDOW_TICKS" \
             --min-amplitude-adc "$MIN_AMPLITUDE_ADC" \
-            "${rate_args[@]}"
+            ${rate_args[@]+"${rate_args[@]}"}  # empty-safe under set -u on bash < 4.4
         ((DRY_RUN)) || touch "$marker"
     done
 fi

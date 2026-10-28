@@ -17,6 +17,10 @@ what pipeline/run_pipeline.sh uses to fit one cut set:
     --run-set NAME        "full" (default) or "reduced" (pds/runs.py)
     --fields LIST         comma-separated HV list, overrides --run-set
     --out-dir DIR         output folder (default $PDS_OUTPUT/fit/waveform_fits)
+    --cutset NAME         pipeline cut set, recorded in the parameter tables
+    --templates SET       detector response: large_pulse (default, every
+                          module M1-M8 and C1-C8) or francesca (M5 M6 M8),
+                          see pds/modules.py
     --batch               no interactive Minuit windows (also when no TTY)
 """
 import argparse
@@ -37,13 +41,14 @@ REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
 sys.path.insert(0, REPO_DIR)
 from pds import paths  # noqa: E402
 from pds.runs import FIT_SCAN, run_set  # noqa: E402
+from pds import modules as pds_modules  # noqa: E402
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Template-convolved fit of the module-averaged mean waveform.')
     parser.add_argument('module', nargs='?', default=None,
-                        help='M8, M5 or M6 (menu if omitted)')
+                        help='M1-M8 or C1-C8 (menu if omitted)')
     parser.add_argument('--selection-dir', default=None,
                         help='folder with the per-channel aggregate CSVs')
     parser.add_argument('--coinc-tag', default=None,
@@ -53,6 +58,11 @@ def parse_args():
     parser.add_argument('--fields', default=None,
                         help='comma-separated HV list in kV, e.g. 0,10,20')
     parser.add_argument('--out-dir', default=None)
+    parser.add_argument('--templates', default=pds_modules.DEFAULT_TEMPLATES,
+                        choices=tuple(pds_modules.TEMPLATE_SETS),
+                        help='template set for the detector response')
+    parser.add_argument('--cutset', default=None,
+                        help='pipeline cut-set name, recorded in the tables')
     parser.add_argument('--batch', action='store_true',
                         help='skip the interactive Minuit windows')
     return parser.parse_args()
@@ -136,6 +146,23 @@ MODULE_CONFIG = {
                subdir=SCAN_LOW, pattern=PATTERN_NEW, skip_fields=(),
                fit_max=2.56),
 }
+# Os ajustes de fit_max e t0_limits acima foram feitos com os templates da
+# Francesca. O MODULE_CONFIG final tem todo modulo com template no conjunto
+# escolhido (--templates; pds/modules.py): canais e templates vem de la, e os
+# valores acima seguem valendo para M5, M6 e M8. Os demais usam FIT_MAX = 3 us
+# e a janela larga T0_LIMITS_UNTUNED, definida mais abaixo.
+TEMPLATE_DIR = pds_modules.TEMPLATE_SETS[ARGS.templates]
+_tuned = MODULE_CONFIG
+MODULE_CONFIG = {}
+for _mod, _entries in pds_modules.templates(ARGS.templates).items():
+    _cfg = {k: v for k, v in _tuned.get(_mod, {}).items()
+            if k not in ('channels', 'templates')}
+    _cfg.setdefault('subdir', None)          # so com --selection-dir
+    _cfg.setdefault('pattern', PATTERN_NEW)
+    _cfg.setdefault('skip_fields', ())
+    _cfg['channels'] = tuple(ch for ch, _ in _entries)
+    _cfg['templates'] = tuple(path.name for _, path in _entries)
+    MODULE_CONFIG[_mod] = _cfg
 
 def escolhe_modulo():
     """Modulo a analisar: argumento de linha de comando, senao menu.
@@ -201,6 +228,9 @@ def coincidence_file(run, ch):
                       for pattern in (PATTERN_NEW, PATTERN_ONLY_SELECTION)]
         return next((c for c in candidates if os.path.isfile(c)), candidates[0])
 
+    if CFG['subdir'] is None:
+        raise SystemExit(f'{MODULE} has no hard-coded coincidence round; '
+                         'give --selection-dir (pipeline/run_pipeline.sh does)')
     sub = f'{CFG["subdir"]}/' if CFG['subdir'] else ''
 
     return (REPO_DIR + '/coincidence/selected_waveforms/'
@@ -314,21 +344,17 @@ def model(t, t0, Aslow, Afast, tau_slow, tau_fast):
 
 time_array = np.arange(0, 1024 * SAMPLE, SAMPLE) / 1000  # us
 
-template_m8_1 = np.loadtxt(
-    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["templates"][0]}'
-)
-
-template_m8_2 = np.loadtxt(
-    str(paths.FRANCESCA_TEMPLATE_DIR) + f'/{CFG["templates"][1]}'
-)
+# um template por canal do modulo, na ordem de CFG['channels'] (M2 com
+# large_pulse: so o array 2, canal 2021)
+module_templates = [np.loadtxt(TEMPLATE_DIR / name) for name in CFG['templates']]
 
 plt.figure()
-plt.scatter(time_array, template_m8_1, s=3, label='2080')
-plt.scatter(time_array, template_m8_2, s=3, label='2081')
+for _ch, _tmpl in zip(CFG['channels'], module_templates):
+    plt.scatter(time_array, _tmpl, s=3, label=str(_ch))
 plt.xlabel('time [us]')
 plt.ylabel('amplitude [ADC]')
 plt.legend()
-plt.savefig(f'{output_folder}/templates/templates_francesca.png', dpi=300)
+plt.savefig(f'{output_folder}/templates/templates_{ARGS.templates}.png', dpi=300)
 plt.close()
 
 # kernel do fit: template da Francesca (canal 2081 -> M8_2), causal e de
@@ -365,12 +391,11 @@ def coincidence_mean(run):
     return mean, sigma
 
 
-FIT_KERNEL = 0.5 * (make_causal_kernel(template_m8_1)
-                    + make_causal_kernel(template_m8_2))
+FIT_KERNEL = np.mean([make_causal_kernel(_tmpl) for _tmpl in module_templates], axis=0)
 
 fig, ax = plt.subplots(1, 2, figsize=(11, 4.5))
 
-ax[0].scatter(time_array, template_m8_2, s=3, label='template bruto')
+ax[0].scatter(time_array, module_templates[-1], s=3, label='template bruto')
 ax[0].scatter(time_array, FIT_KERNEL, s=3, label='kernel causal (area 1)')
 ax[0].set_xlim(0, 6)
 ax[0].set_xlabel('time [us]')
@@ -463,7 +488,15 @@ T0_HALF = 0.010          # us, meia-janela padrao (~0.6 amostra)
 # M8/M5: e resposta mais rapida, nao atraso de cabo. A janela dele vai de
 # 0.9 a 1.4 us -- larga de proposito, para deixar o fit encontrar sozinho
 # onde o t0 quer ficar em vez de encostar num limite apertado.
-T0_LIMITS = CFG.get('t0_limits', (T0_CENTER - T0_HALF, T0_CENTER + T0_HALF))
+# Modulos sem ajuste proprio (todos menos M5, M6, M8): janela larga, como a
+# do M6, para o fit achar o t0 sozinho em vez de encostar num limite.
+T0_LIMITS_UNTUNED = (0.9, 1.4)
+if 't0_limits' in CFG:
+    T0_LIMITS = CFG['t0_limits']
+elif MODULE in ('M5', 'M8'):
+    T0_LIMITS = (T0_CENTER - T0_HALF, T0_CENTER + T0_HALF)
+else:
+    T0_LIMITS = T0_LIMITS_UNTUNED
 
 # Janela do fit: FIT_MIN fixo, FIT_MAX por modulo (chave 'fit_max' no
 # MODULE_CONFIG; default = 3 us para quem nao tem valor proprio). Ver a nota junto do MODULE_CONFIG, mais acima.
@@ -1053,11 +1086,13 @@ _meta_common = [
     f'gerado em     : {_dt.datetime.now():%Y-%m-%d %H:%M:%S}',
     f'script        : {os.path.basename(globals().get("__file__", "?"))}',
     f'canal/modulo  : {_tag}',
-    f'template      : {_template_label()}',
+    f'template      : {_template_label()}  ({ARGS.templates}: {TEMPLATE_DIR})',
     f'drift length  : {DRIFT_LENGTH} m   (E = HV / L)',
     f'janela do fit : {FIT_MIN} - {FIT_MAX} us',
     f'tau_fast      : FIXO em {TAU_FAST_FIXED} us',
     f'yerr          : YERR_MODE = {YERR_MODE}',
+    f'cut set       : {ARGS.cutset or "-"}',
+    f'amostra (tag) : {ARGS.coinc_tag or os.path.basename(os.path.normpath(ARGS.selection_dir or "-"))}',
     f'dados         : {os.path.dirname(coincidence_file(runs[0], CHANNELS[0]))}',
     'unidades      : campo em kV (HV) e kV/cm; tempos em us; '
     'amplitudes e integrais normalizadas pelo pico de E = 0',

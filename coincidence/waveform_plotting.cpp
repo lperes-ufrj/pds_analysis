@@ -232,7 +232,8 @@ void plotAndSaveStatistics(
     const std::string &label,
     const fs::path &output_dir,
     const std::string &selection_title,
-    const std::string &selection_suffix
+    const std::string &selection_suffix,
+    const std::string &summary_suffix
 )
 {
     std::vector<unsigned int> plot_channels;
@@ -347,7 +348,8 @@ void plotAndSaveStatistics(
         );
     }
 
-    const fs::path output_stem = output_dir / ("mean_median_waveforms_" + label);
+    const fs::path output_stem = output_dir
+        / ("mean_median_waveforms_" + label + summary_suffix);
     canvas.SaveAs((output_stem.string() + ".pdf").c_str());
     canvas.SaveAs((output_stem.string() + ".png").c_str());
     std::cout << "Saved " << output_stem << ".pdf and .png\n";

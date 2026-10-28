@@ -38,6 +38,23 @@ std::vector<std::string> splitWhitespaceFields(const std::string &line)
     return fields;
 }
 
+// SiPM manufacturer per channel, for the prompt-fraction windows.
+enum class SipmType { HPK, FBK };
+const std::unordered_map<unsigned int, SipmType> SIPM_TYPES{
+    {1010, SipmType::HPK}, {1011, SipmType::HPK},
+    {1020, SipmType::HPK}, {1021, SipmType::HPK},
+    {1030, SipmType::HPK}, {1031, SipmType::HPK},
+    {1040, SipmType::HPK}, {1041, SipmType::HPK},
+    {1050, SipmType::HPK}, {1051, SipmType::HPK},
+    {1060, SipmType::HPK}, {1061, SipmType::HPK},
+    {1070, SipmType::HPK}, {1071, SipmType::HPK},
+    {1080, SipmType::HPK}, {1081, SipmType::HPK},
+    {2050, SipmType::FBK}, {2051, SipmType::FBK},
+    {2060, SipmType::HPK}, {2061, SipmType::HPK},
+    {2070, SipmType::HPK}, {2071, SipmType::HPK},
+    {2080, SipmType::FBK}, {2081, SipmType::FBK},
+};
+
 }  // namespace
 
 WaveformAnalyzer::WaveformAnalyzer(const std::string &ini_file)
@@ -385,6 +402,11 @@ std::unique_ptr<TChain> createChain(const std::vector<std::string> &files)
 }
 
 
+bool WaveformAnalyzer::hasFprompt(unsigned int channel) const
+{
+    return SIPM_TYPES.count(channel) != 0;
+}
+
 double WaveformAnalyzer::fprompt(
     const std::vector<short> &waveform,
     unsigned int channel
@@ -393,26 +415,11 @@ double WaveformAnalyzer::fprompt(
     // Keep the manufacturer mapping and the two windows separate even while
     // they have the same values, so either detector type can be tuned without
     // changing the CSV/export code.
-    enum class SipmType { HPK, FBK };
-    static const std::unordered_map<unsigned int, SipmType> sipm_types{
-        {1010, SipmType::HPK}, {1011, SipmType::HPK},
-        {1020, SipmType::HPK}, {1021, SipmType::HPK},
-        {1030, SipmType::HPK}, {1031, SipmType::HPK},
-        {1040, SipmType::HPK}, {1041, SipmType::HPK},
-        {1050, SipmType::HPK}, {1051, SipmType::HPK},
-        {1060, SipmType::HPK}, {1061, SipmType::HPK},
-        {1070, SipmType::HPK}, {1071, SipmType::HPK},
-        {1080, SipmType::HPK}, {1081, SipmType::HPK},
-        {2050, SipmType::FBK}, {2051, SipmType::FBK},
-        {2060, SipmType::HPK}, {2061, SipmType::HPK},
-        {2070, SipmType::HPK}, {2071, SipmType::HPK},
-        {2080, SipmType::FBK}, {2081, SipmType::FBK},
-    };
     constexpr std::pair<int, int> HPK_FAST_INTERVAL{60, 90};
     constexpr std::pair<int, int> FBK_FAST_INTERVAL{60, 90};
 
-    const auto type = sipm_types.find(channel);
-    if (type == sipm_types.end()) {
+    const auto type = SIPM_TYPES.find(channel);
+    if (type == SIPM_TYPES.end()) {
         throw std::runtime_error(
             "Missing SiPM type for channel " + std::to_string(channel)
         );

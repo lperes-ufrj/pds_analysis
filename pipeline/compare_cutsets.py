@@ -50,6 +50,21 @@ def read_table(path):
     return pd.read_csv(path, sep=r"\s+", comment="#")
 
 
+def sample_tag(cutset, runs):
+    """Sample tag the cut set was fitted on (sample.txt written by the
+    pipeline's fit stage), or None for older fits."""
+    path = paths.OUTPUT_DIR / "pipeline" / cutset / runs / "sample.txt"
+    if not path.is_file():
+        return None
+    match = re.search(r"^sample tag : (\S+)", path.read_text(), re.M)
+    return match.group(1) if match else None
+
+
+def display_name(cutset, runs):
+    tag = sample_tag(cutset, runs)
+    return f"{cutset} [{tag}]" if tag else cutset
+
+
 def fit_tables(cutset, runs, module):
     folder = (paths.OUTPUT_DIR / "pipeline" / cutset / runs
               / "plots_bertolini_avg" / module / "parameters")
@@ -88,7 +103,9 @@ def main():
     stem = "_vs_".join(args.cutsets)
 
     # ---- selection efficiency per run
-    lines = [f"# fraction of waveforms passing all waveform cuts ({args.runs} runs)",
+    lines = [f"# fraction of waveforms passing all waveform cuts ({args.runs} runs)"]
+    lines += [f"# {display_name(c, args.runs)}" for c in args.cutsets]
+    lines += [
              f"{'HV_kV':>7} {'run':>7} " + " ".join(f"{c:>22}" for c in args.cutsets)]
     for kv, run in run_set(args.runs).items():
         cells = []
@@ -129,7 +146,7 @@ def main():
                 # small horizontal offset so overlapping points stay visible
                 x = df["efield_kVcm"] * (1 + 0.006 * (i - (len(tables) - 1) / 2))
                 ax.errorbar(x, df[column], yerr=err, fmt="o-", ms=4,
-                            capsize=2, label=cutset)
+                            capsize=2, label=display_name(cutset, args.runs))
             ax.set_ylabel(label)
             ax.grid(alpha=0.3)
         for ax in axes[-1]:
@@ -144,7 +161,7 @@ def main():
 
         cols = ["field_kV", "tau_slow", "tau_slow_err", "chi2_ndof", "valid"]
         for cutset, t in tables.items():
-            print(f"  {cutset}")
+            print(f"  {display_name(cutset, args.runs)}")
             print(t["params"][cols].to_string(index=False,
                                               float_format=lambda v: f"{v:.4g}"))
     return 0

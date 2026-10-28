@@ -45,7 +45,9 @@ void plotAndSaveStatistics(
     const std::string &label,
     const std::filesystem::path &output_dir,
     const std::string &selection_title = "Final Selection",
-    const std::string &selection_suffix = "final_selection"
+    const std::string &selection_suffix = "final_selection",
+    // appended to the mean_median_waveforms_LABEL file name (channel groups)
+    const std::string &summary_suffix = ""
 );
 
 }  // namespace waveform_plotting

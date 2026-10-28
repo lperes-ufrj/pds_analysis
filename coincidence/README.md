@@ -1,7 +1,8 @@
 # Selection without coincidence
 
 `only_selection.cpp` (`bin/only_selection`) takes every waveform of the
-channels given with `--channel` and applies the quality cuts of
+channels given with `--channel` (any channel with a section in the interval
+INI, cathode or membrane) and applies the quality cuts of
 `plot_wfs_coincidence` (the shared `evaluateCoin1p0vSelection` in
 `coincidence_lib.cpp`). Its outputs have the same names and formats, with
 the label `only_selection_scan_run_RUN_TAG`:
@@ -22,9 +23,12 @@ given. Options beyond those of `plot_wfs_coincidence`:
 | `--require-peak` | also reject waveforms without a significant peak |
 | `--max-waveforms N` | at most N waveforms per channel, after the rate cut |
 | `--max-plot-waveforms N` | waveforms in the before-cuts density plot (default 20000) |
+| `--channels-per-pass N` | channels held in memory at once, one pass over the input per group (default 4; 0 = all) |
 
-The cut summary adds the rate-cut counts and a per-channel table. In the
-pipeline, use a cut set with `MODE=single` (see `pipeline/README.md`).
+The cut summary adds the rate-cut counts and a per-channel table. Channels
+without a SiPM type in `coincidence_lib.cpp` (2010-2041) get no prompt
+fraction. In the
+pipeline, use a cut set with `TRIGGER=no_coinc` (see `pipeline/README.md`).
 
 # Peak finding without coincidence
 

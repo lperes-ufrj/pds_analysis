@@ -8,6 +8,11 @@
 // channels, a "significant peak required" cut, and a per-channel limit on the
 // number of waveforms.
 //
+// Any channel with a section in the interval INI works (cathode 10xx and
+// membrane 20xx). Selected waveforms are kept in memory for the median and
+// percentiles, so channels are processed in groups of --channels-per-pass,
+// one pass over the input per group.
+//
 // The outputs mirror plot_wfs_coincidence, with the label
 // only_selection_scan_run_RUN_TAG in place of coincidence_scan_run_RUN_TAG.
 
@@ -49,6 +54,8 @@ using waveform_plotting::plotAndSaveStatistics;
 constexpr double DEFAULT_MAX_AUXILIARY_AMPLITUDE = 500.0;
 constexpr double DEFAULT_MAX_FULL_RANGE_AMPLITUDE = 10000.0;
 constexpr std::size_t DEFAULT_MAX_PLOT_WAVEFORMS = 20000;
+constexpr std::size_t DEFAULT_CHANNELS_PER_PASS = 4;
+constexpr std::size_t BASELINE_NOISE_TICKS = 50;
 constexpr Long64_t PROGRESS_INTERVAL = 1000000;
 const std::string LABEL_PREFIX = "only_selection_scan_run_";
 
@@ -65,6 +72,7 @@ struct Options {
     bool require_peak = false;
     std::size_t max_waveforms = 0;  // per channel, after the rate cut; 0 = all
     std::size_t max_plot_waveforms = DEFAULT_MAX_PLOT_WAVEFORMS;
+    std::size_t channels_per_pass = DEFAULT_CHANNELS_PER_PASS;  // 0 = all in one pass
 };
 
 struct WaveformKey {
@@ -115,14 +123,48 @@ struct CutStatistics {
     }
 };
 
+// Sample standard deviation of the baseline-subtracted ADC values pooled from
+// ticks [0, 50) of the final-selection waveforms, accumulated while scanning
+// (same Welford update and order as plot_wfs_coincidence's cut summary).
+struct BaselineNoise {
+    std::size_t waveforms = 0;
+    std::size_t samples = 0;
+    double mean = 0.0;
+    double sum_squared_difference = 0.0;
+
+    void add(const std::vector<short> &adc, double baseline)
+    {
+        ++waveforms;
+        const std::size_t stop = std::min(BASELINE_NOISE_TICKS, adc.size());
+        for (std::size_t sample = 0; sample < stop; ++sample) {
+            const double value = static_cast<double>(adc[sample]) - baseline;
+            ++samples;
+            const double difference = value - mean;
+            mean += difference / static_cast<double>(samples);
+            sum_squared_difference += difference * (value - mean);
+        }
+    }
+};
+
 struct ScanResult {
     Long64_t tree_entries = 0;
     Long64_t entries_read = 0;
     bool stopped_at_limit = false;
     std::map<unsigned int, CutStatistics> cuts;
+    std::map<unsigned int, BaselineNoise> noise;
     RecordsByChannel before_cuts;      // at most max_plot_waveforms per channel
     RecordsByChannel final_selection;
     FPromptRecordsByChannel final_fprompt;
+};
+
+// Totals over all passes of one run, for the cut summary.
+struct RunTotals {
+    Long64_t tree_entries = 0;
+    Long64_t entries_read = 0;
+    std::size_t passes = 0;
+    std::size_t passes_stopped_at_limit = 0;
+    std::map<unsigned int, CutStatistics> cuts;
+    std::map<unsigned int, BaselineNoise> noise;
 };
 
 std::string trim(const std::string &text)
@@ -180,6 +222,8 @@ void printUsage(const char *program)
         << "                               rate cut, in file order (default: 0 = all)\n"
         << "  --max-plot-waveforms N       Waveforms per channel in the before-cuts density\n"
         << "                               plot (default: 20000; 0 = no plot)\n"
+        << "  --channels-per-pass N        Channels held in memory at once; one pass over\n"
+        << "                               the input per group (default: 4; 0 = all)\n"
         << "  -h, --help                   Show this help\n";
 }
 
@@ -218,7 +262,8 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
             || argument == "--max-auxiliary-amplitude"
             || argument == "--max-full-range-amplitude"
             || argument == "--norm-rate-adc-threshold-file"
-            || argument == "--max-waveforms" || argument == "--max-plot-waveforms") {
+            || argument == "--max-waveforms" || argument == "--max-plot-waveforms"
+            || argument == "--channels-per-pass") {
             if (++index >= argc) throw std::runtime_error("Missing value for " + argument);
             const std::string value = argv[index];
             if (argument == "--channel") {
@@ -239,6 +284,8 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
                 options.rate_threshold_file = value;
             } else if (argument == "--max-waveforms") {
                 options.max_waveforms = parseCount(argument, value);
+            } else if (argument == "--channels-per-pass") {
+                options.channels_per_pass = parseCount(argument, value);
             } else {
                 options.max_plot_waveforms = parseCount(argument, value);
             }
@@ -474,11 +521,14 @@ ScanResult scanWaveforms(
         const bool rejected = decision.rejected() || (options.require_peak && fails_no_peak);
         if (!rejected) {
             ++cuts.final_selection;
+            result.noise[channel].add(*adc, baseline);
             result.final_selection[channel].push_back({baseline, *adc});
-            result.final_fprompt[channel].push_back({
-                {event, channel, waveform_index},
-                analyzer.fprompt(*adc, channel)
-            });
+            if (analyzer.hasFprompt(channel)) {
+                result.final_fprompt[channel].push_back({
+                    {event, channel, waveform_index},
+                    analyzer.fprompt(*adc, channel)
+                });
+            }
         } else {
             ++cuts.rejected_combined;
         }
@@ -513,9 +563,13 @@ void writeCutSummary(
     const std::vector<unsigned int> &dropped_channels,
     const NormRateAdcThresholds &thresholds,
     const WaveformAnalyzer &analyzer,
-    const ScanResult &scan
+    const RunTotals &scan
 )
 {
+    std::vector<unsigned int> no_fprompt;
+    for (const unsigned int channel : channels) {
+        if (!analyzer.hasFprompt(channel)) no_fprompt.push_back(channel);
+    }
     std::ofstream output(filename);
     if (!output) {
         throw std::runtime_error("Could not create cut summary: " + filename.string());
@@ -539,6 +593,8 @@ void writeCutSummary(
                   std::vector<unsigned int>(channels.begin(), channels.end())) << '\n'
            << "Channels skipped for missing/invalid rate threshold: "
            << joinChannels(dropped_channels) << '\n'
+           << "Channels without prompt fraction (no SiPM type in coincidence_lib.cpp): "
+           << joinChannels(no_fprompt) << '\n'
            << "Normalized-rate ADC-threshold file: "
            << (options.rate_threshold_file.empty()
                    ? std::string("none (no rate cut)")
@@ -557,8 +613,14 @@ void writeCutSummary(
     }
     output << "Maximum waveforms per channel: "
            << (options.max_waveforms ? std::to_string(options.max_waveforms) : "all") << '\n'
-           << "Tree entries: " << scan.tree_entries << " (read: " << scan.entries_read
-           << (scan.stopped_at_limit ? ", stopped once every channel reached the limit" : "")
+           << "Tree entries: " << scan.tree_entries << '\n'
+           << "Passes over the input: " << scan.passes << " (channels per pass: "
+           << (options.channels_per_pass ? std::to_string(options.channels_per_pass) : "all")
+           << "; entries read in total: " << scan.entries_read
+           << (scan.passes_stopped_at_limit
+                   ? "; " + std::to_string(scan.passes_stopped_at_limit)
+                       + " pass(es) stopped once every channel reached the limit"
+                   : std::string())
            << ")\n"
            << "Waveforms read in the used channels: " << total.read << '\n'
            << "Rejected by the normalized-rate amplitude threshold: " << total.rejected_rate << '\n'
@@ -600,38 +662,22 @@ void writeCutSummary(
            << "Definition: sample standard deviation of all baseline-subtracted "
            << "ADC values pooled from ticks [0, 50) of the final-selection waveforms.\n";
     for (const unsigned int channel : channels) {
-        const auto found = scan.final_selection.find(channel);
-        if (found == scan.final_selection.end() || found->second.empty()) {
+        const auto found = scan.noise.find(channel);
+        if (found == scan.noise.end() || found->second.waveforms == 0) {
             output << "Channel " << channel << ": no final-selection waveforms\n";
             continue;
         }
-
-        std::size_t sample_count = 0;
-        double mean = 0.0;
-        double sum_squared_difference = 0.0;
-        for (const auto &record : found->second) {
-            const std::size_t stop = std::min<std::size_t>(50, record.adc.size());
-            for (std::size_t sample = 0; sample < stop; ++sample) {
-                const double value = static_cast<double>(record.adc[sample])
-                    - record.baseline;
-                ++sample_count;
-                const double difference = value - mean;
-                mean += difference / static_cast<double>(sample_count);
-                const double updated_difference = value - mean;
-                sum_squared_difference += difference * updated_difference;
-            }
-        }
-
+        const BaselineNoise &noise = found->second;
         output << "Channel " << channel << ": ";
-        if (sample_count > 1) {
-            output << std::sqrt(sum_squared_difference
-                                / static_cast<double>(sample_count - 1))
+        if (noise.samples > 1) {
+            output << std::sqrt(noise.sum_squared_difference
+                                / static_cast<double>(noise.samples - 1))
                    << " ADC";
         } else {
             output << "not enough samples";
         }
-        output << " (waveforms=" << found->second.size()
-               << ", baseline samples=" << sample_count << ")\n";
+        output << " (waveforms=" << noise.waveforms
+               << ", baseline samples=" << noise.samples << ")\n";
     }
 
     const auto write_counts = [&](const std::string &criterion, std::size_t rejected) {
@@ -739,6 +785,10 @@ void process(const Options &options, const fs::path &repo_dir)
     const WaveformAnalyzer analyzer(options.config.string());
     for (const unsigned int channel : channels) {
         analyzer.interval(channel, "noise");  // fail early on a missing channel section
+        if (!analyzer.hasFprompt(channel)) {
+            std::cerr << "Channel " << channel << " has no SiPM type in coincidence_lib.cpp: "
+                      << "no prompt fraction (fprompt CSV) for it\n";
+        }
     }
 
     const auto root_paths = readRootFiles(options.input_list, repo_dir);
@@ -750,33 +800,67 @@ void process(const Options &options, const fs::path &repo_dir)
     for (const auto channel : channels) std::cout << ' ' << channel;
     std::cout << '\n';
 
-    const ScanResult scan = scanWaveforms(*chain, analyzer, channels, thresholds, options);
-    for (const auto &[channel, cuts] : scan.cuts) {
-        std::cout << "Channel " << channel << ": read " << cuts.read
-                  << ", rate cut " << cuts.rejected_rate
-                  << ", entering " << cuts.entering
-                  << ", selected " << cuts.final_selection << '\n';
+    // Groups of channels, one pass over the input each, so that only one
+    // group's waveforms are in memory at a time.
+    const std::vector<unsigned int> ordered(channels.begin(), channels.end());
+    const std::size_t group_size = options.channels_per_pass
+        ? options.channels_per_pass : ordered.size();
+    const std::size_t group_count = (ordered.size() + group_size - 1) / group_size;
+    RunTotals totals;
+    for (std::size_t first = 0; first < ordered.size(); first += group_size) {
+        const std::set<unsigned int> group(
+            ordered.begin() + static_cast<std::ptrdiff_t>(first),
+            ordered.begin() + static_cast<std::ptrdiff_t>(
+                std::min(first + group_size, ordered.size())));
+        std::string group_name;
+        for (const unsigned int channel : group) {
+            group_name += (group_name.empty() ? "" : "-") + std::to_string(channel);
+        }
+        if (group_count > 1) {
+            std::cout << "\nPass " << totals.passes + 1 << '/' << group_count
+                      << ": channels " << group_name << '\n';
+        }
+
+        ScanResult scan = scanWaveforms(*chain, analyzer, group, thresholds, options);
+        for (const auto &[channel, cuts] : scan.cuts) {
+            std::cout << "Channel " << channel << ": read " << cuts.read
+                      << ", rate cut " << cuts.rejected_rate
+                      << ", entering " << cuts.entering
+                      << ", selected " << cuts.final_selection << '\n';
+        }
+        writeFpromptCsvs(scan.final_fprompt, run, label, options.output_dir);
+        if (options.max_plot_waveforms > 0) {
+            plotAllWaveformsForSelection(
+                group, scan.before_cuts, run, label,
+                "Before Cuts", "before_cuts", options.output_dir
+            );
+        }
+        if (scan.final_selection.empty()) {
+            std::cout << "No waveform of channels " << group_name
+                      << " passed the selection; no mean waveforms\n";
+        } else {
+            // one multi-panel figure per group; a single group keeps the
+            // plot_wfs_coincidence name
+            plotAndSaveStatistics(
+                group, scan.final_selection, run, label, options.output_dir,
+                "Final Selection", "final_selection",
+                group_count > 1 ? "_ch" + group_name : ""
+            );
+        }
+
+        totals.tree_entries = scan.tree_entries;
+        totals.entries_read += scan.entries_read;
+        totals.passes_stopped_at_limit += scan.stopped_at_limit;
+        ++totals.passes;
+        for (const auto &[channel, cuts] : scan.cuts) totals.cuts[channel] = cuts;
+        for (const auto &[channel, noise] : scan.noise) totals.noise[channel] = noise;
     }
 
     writeCutSummary(
         options.output_dir / ("selection_cuts_" + label + ".txt"),
         run, options.tag, options.input_list, root_files.size(), options,
-        channels, dropped, thresholds, analyzer, scan
+        channels, dropped, thresholds, analyzer, totals
     );
-    writeFpromptCsvs(scan.final_fprompt, run, label, options.output_dir);
-
-    if (options.max_plot_waveforms > 0) {
-        plotAllWaveformsForSelection(
-            channels, scan.before_cuts, run, label,
-            "Before Cuts", "before_cuts", options.output_dir
-        );
-    }
-    if (scan.final_selection.empty()) {
-        std::cout << "No waveform passed the selection; no mean waveforms for run "
-                  << run << '\n';
-        return;
-    }
-    plotAndSaveStatistics(channels, scan.final_selection, run, label, options.output_dir);
 }
 
 }  // namespace

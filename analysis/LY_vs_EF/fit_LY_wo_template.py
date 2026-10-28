@@ -8,11 +8,12 @@ Usage:
     SAMPLE   a pipeline cut-set name (pipeline/cutsets/NAME.env, resolved to
              its coincidence tag) or a sample label, i.e. a folder name in
              coincidence/selected_waveforms/ (pipeline tags such as
-             c_m8_w10_a0_r_292kV_888e6582, single-channel samples s_..., or
+             default_coinc_w10_a0_r_292kV_888e6582, no_coinc_2080-2081_..., or
              older YYYYMMDD_HHMMSS rounds).
              Several samples are combined. Default: SAMPLE_LABELS below.
     --channels  channels to average (default: CHANNELS below)
-    --out       output folder (default $PDS_OUTPUT/analysis/LY_vs_EF/<samples>)
+    --out       output folder (default $PDS_OUTPUT/analysis/LY_vs_EF/CUTSET__TAG,
+                or .../TAG when a tag is given; several samples joined by +)
     --batch     no interactive Minuit window and no plt.show()
 """
 from pathlib import Path
@@ -356,8 +357,9 @@ def calculate_study_XA(csv_suffix, channel, y_err_runs,path_waveforms):
 
 
 def resolve_sample(name):
-    """(label, display name): a folder in selected_waveforms/ is used as is;
-    otherwise the name must be a pipeline cut set, resolved to its tag."""
+    """(tag, display name). A folder in selected_waveforms/ is used as is
+    (display = the tag); a pipeline cut set is resolved to its sample tag
+    (display = "cut set [tag]", so plots say both the recipe and the data)."""
     if (paths.COINC_DIR / name).is_dir():
         return name, name
     cutset_file = repo_dir / "pipeline" / "cutsets" / f"{name}.env"
@@ -370,7 +372,7 @@ def resolve_sample(name):
     if not (paths.COINC_DIR / tag).is_dir():
         raise SystemExit(f"cut set {name} -> {tag}, but {paths.COINC_DIR / tag} "
                          "does not exist; run its selection stage (or sync it)")
-    return tag, name
+    return tag, f"{name} [{tag}]"
 
 
 def parse_args():
@@ -390,13 +392,15 @@ def main() -> None:
     INTERACTIVE = not args.batch and sys.stdin.isatty()
     samples = [resolve_sample(name) for name in args.samples]
     sample_names = [display for _, display in samples]
+    # folder: cutset__tag (or the tag), joined with + for several samples
+    folder_names = [display.replace(" [", "__").rstrip("]") for _, display in samples]
 
     OUT_DIR = Path(args.out) if args.out else (
-        paths.OUTPUT_DIR / "analysis" / "LY_vs_EF" / "+".join(sample_names))
+        paths.OUTPUT_DIR / "analysis" / "LY_vs_EF" / "+".join(folder_names))
     (OUT_DIR / "mc_draws").mkdir(parents=True, exist_ok=True)
 
     for label, display in samples:
-        print(f"sample {display}: coincidence/selected_waveforms/{label}")
+        print(f"sample {display}: coincidence/selected_waveforms/{label}/")
     print(f"channels {CHANNELS}  ->  {OUT_DIR}")
 
     mean_rel_ly = []
@@ -629,7 +633,7 @@ def main() -> None:
     table_path = figure_path.with_suffix(".txt")
     with open(table_path, "w") as fh:
         fh.write("efield_kVcm rel_ly err_low err_up\n")
-        fh.write(f"# samples : {', '.join(f'{d} ({l})' for l, d in samples)}\n")
+        fh.write(f"# samples : {', '.join(d for _, d in samples)}  (cut set [sample tag])\n")
         fh.write(f"# channels: {CHANNELS}\n")
         fh.write(f"# Birks   : B_1 = {m_birks.values['B_1']:.5g} +- {m_birks.errors['B_1']:.3g}, "
                  f"k = {m_birks.values['k']:.5g} +- {m_birks.errors['k']:.3g}, "

@@ -55,6 +55,8 @@ public:
     int pulseStart(const std::vector<short> &waveform, unsigned int channel) const;
     // Baseline-subtracted prompt charge divided by the total signal charge.
     double fprompt(const std::vector<short> &waveform, unsigned int channel) const;
+    // fprompt() needs the channel's SiPM type (table in coincidence_lib.cpp).
+    bool hasFprompt(unsigned int channel) const;
     std::int64_t dtNsPulses(
         const std::vector<short> &waveform_a,
         unsigned int channel_a,

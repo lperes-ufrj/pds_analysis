@@ -10,7 +10,9 @@ Usage:
 
 Reads:
     $PDS_OUTPUT/pipeline/<cutset>/<runs>/plots_bertolini_avg/<module>/parameters/
-    coincidence/selected_waveforms/<cutset>/selection_cuts_*.txt
+    $PDS_OUTPUT/pipeline/<cutset>/<runs>/selection/selection_cuts_*.txt
+        (the cut flow copied at fit time; the selection folder itself is
+        shared by cut sets with the same coincidence tag)
 Writes (default $PDS_OUTPUT/pipeline/compare/<runs>/):
     compare_<module>_<cutsets>.png
     efficiency_<cutsets>.txt
@@ -30,8 +32,6 @@ import pandas as pd  # noqa: E402
 from pds import paths  # noqa: E402
 from pds.runs import run_set  # noqa: E402
 
-REPO_DIR = Path(__file__).resolve().parents[1]
-SELECTED_DIR = REPO_DIR / "coincidence" / "selected_waveforms"
 
 # (table, column, axis label); the error column is <column>_err
 PANELS = [
@@ -60,9 +60,10 @@ def fit_tables(cutset, runs, module):
     return {"params": read_table(params), "integrals": read_table(integrals)}
 
 
-def efficiency(cutset, run):
+def efficiency(cutset, runs, run):
     """(accepted, total) summed over the saved channels, or None."""
-    files = sorted((SELECTED_DIR / cutset).glob(f"selection_cuts_*_run_{run}_*.txt"))
+    folder = paths.OUTPUT_DIR / "pipeline" / cutset / runs / "selection"
+    files = sorted(folder.glob(f"selection_cuts_*_run_{run}_*.txt"))
     if not files:
         return None
     match = COMBINED_RE.search(files[0].read_text())
@@ -92,7 +93,7 @@ def main():
     for kv, run in run_set(args.runs).items():
         cells = []
         for cutset in args.cutsets:
-            eff = efficiency(cutset, run)
+            eff = efficiency(cutset, args.runs, run)
             cells.append("-" if eff is None or eff[1] == 0
                          else f"{eff[0] / eff[1]:.3f} ({eff[0]}/{eff[1]})")
         lines.append(f"{kv:>7} {run:>7} " + " ".join(f"{c:>22}" for c in cells))

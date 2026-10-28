@@ -1,5 +1,23 @@
+"""Relative light yield S/S0 vs electric field, from the integral of the
+mean waveforms, with a Birks fit and the PD-HD / previous-M8 references.
+
+Usage:
+    python analysis/LY_vs_EF/fit_LY_wo_template.py [SAMPLE ...]
+        [--channels CH [CH ...]] [--out DIR] [--batch]
+
+    SAMPLE   a pipeline cut-set name (pipeline/cutsets/NAME.env, resolved to
+             its coincidence tag) or a sample label, i.e. a folder name in
+             coincidence/selected_waveforms/ (pipeline tags such as
+             c_m8_w10_a0_r_292kV_888e6582, or older YYYYMMDD_HHMMSS rounds).
+             Several samples are combined. Default: SAMPLE_LABELS below.
+    --channels  channels to average (default: CHANNELS below)
+    --out       output folder (default $PDS_OUTPUT/analysis/LY_vs_EF/<samples>)
+    --batch     no interactive Minuit window and no plt.show()
+"""
 from pathlib import Path
 from collections import defaultdict
+import argparse
+import subprocess
 import sys
 
 import matplotlib.pyplot as plt
@@ -17,11 +35,16 @@ from iminuit.cost import LeastSquares
 repo_dir = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(repo_dir))
 from pds.integrals import calc_integral_and_error,read_txt_error_file
+from pds import paths
 
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 SAMPLE_LABELS = ['20261027_135746']#['20260909_213507','20260909_125014']
 
 CHANNELS = [2070,2071]
+
+# set in main(): output folder, and whether to open interactive windows
+OUT_DIR = None
+INTERACTIVE = True
 run_to_efield = {
     # Zero-field reference
     39510: 0.0,
@@ -176,7 +199,7 @@ def mc_central_uncertainty(x, err_minus, err_plus,
         ax.set_ylabel("MC Draw (Counts/bin)")
         ax.set_xlabel(rf"$S/S_0$ Relative Light Yield")
         fig.savefig(
-            repo_dir / "analysis" / "LY_vs_EF"
+            OUT_DIR / "mc_draws"
             / f"fit_LY_wo_template_mc_fit_{formatar_nome_arquivo(label)}_{'_'.join(map(str, CHANNELS))}.png",
             dpi=300,
             bbox_inches="tight",
@@ -329,14 +352,56 @@ def calculate_study_XA(csv_suffix, channel, y_err_runs,path_waveforms):
 
 
 
+def resolve_sample(name):
+    """(label, display name): a folder in selected_waveforms/ is used as is;
+    otherwise the name must be a pipeline cut set, resolved to its tag."""
+    if (paths.COINC_DIR / name).is_dir():
+        return name, name
+    cutset_file = repo_dir / "pipeline" / "cutsets" / f"{name}.env"
+    if not cutset_file.is_file():
+        raise SystemExit(f"{name!r} is neither a folder in {paths.COINC_DIR} "
+                         f"nor a cut set in {cutset_file.parent}")
+    tag = subprocess.run(
+        [str(repo_dir / "pipeline" / "run_pipeline.sh"), name, "--print-tag"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    if not (paths.COINC_DIR / tag).is_dir():
+        raise SystemExit(f"cut set {name} -> {tag}, but {paths.COINC_DIR / tag} "
+                         "does not exist; run its selection stage (or sync it)")
+    return tag, name
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("samples", nargs="*", default=SAMPLE_LABELS)
+    parser.add_argument("--channels", nargs="+", type=int, default=CHANNELS)
+    parser.add_argument("--out", default=None)
+    parser.add_argument("--batch", action="store_true")
+    return parser.parse_args()
+
+
 def main() -> None:
+    global CHANNELS, OUT_DIR, INTERACTIVE
+
+    args = parse_args()
+    CHANNELS = list(args.channels)
+    INTERACTIVE = not args.batch and sys.stdin.isatty()
+    samples = [resolve_sample(name) for name in args.samples]
+    sample_names = [display for _, display in samples]
+
+    OUT_DIR = Path(args.out) if args.out else (
+        paths.OUTPUT_DIR / "analysis" / "LY_vs_EF" / "+".join(sample_names))
+    (OUT_DIR / "mc_draws").mkdir(parents=True, exist_ok=True)
+
+    for label, display in samples:
+        print(f"sample {display}: coincidence/selected_waveforms/{label}")
+    print(f"channels {CHANNELS}  ->  {OUT_DIR}")
 
     mean_rel_ly = []
     mean_rel_ly_err_up = []
     mean_rel_ly_err_low = []
     efields = None
         
-    for sample_label in SAMPLE_LABELS:
+    for sample_label, _ in samples:
         
         path_waveforms = (
         repo_dir / "coincidence/selected_waveforms" / sample_label
@@ -442,7 +507,8 @@ def main() -> None:
            k = 0.1,
             )
 
-    m_birks.interactive()
+    if INTERACTIVE:
+        m_birks.interactive()
     m_birks.migrad()
     m_birks.hesse()
 
@@ -544,7 +610,7 @@ def main() -> None:
         mean_rel_ly,
         yerr=[mean_rel_ly - mean_rel_ly_err_low, mean_rel_ly_err_up - mean_rel_ly],
         fmt=".",
-        label=f"Mean Channels {CHANNELS}",
+        label=f"{' + '.join(sample_names)}: channels {CHANNELS}",
     )
     plt.xlabel("Electric field (kV/cm)")
     plt.ylabel(rf"$S/S_0$ (LY Normalized)")
@@ -553,12 +619,24 @@ def main() -> None:
     dunestyle.Preliminary(x=0.05,y=0.9)
     dunestyle.WIP(x=0.05,y=0.83)
     plt.legend(loc="lower left",ncols=1 ,frameon=True, fontsize=8)
-    plt.savefig(
-        repo_dir / "analysis" / "LY_vs_EF" / f"fit_LY_wo_template_chs_{'_'.join(map(str,CHANNELS))}_{TIMESTAMP}.png",
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.show()
+    figure_path = OUT_DIR / f"fit_LY_wo_template_chs_{'_'.join(map(str,CHANNELS))}_{TIMESTAMP}.png"
+    plt.savefig(figure_path, dpi=300, bbox_inches="tight")
+
+    # numbers behind the figure, to compare samples and cut sets
+    table_path = figure_path.with_suffix(".txt")
+    with open(table_path, "w") as fh:
+        fh.write("efield_kVcm rel_ly err_low err_up\n")
+        fh.write(f"# samples : {', '.join(f'{d} ({l})' for l, d in samples)}\n")
+        fh.write(f"# channels: {CHANNELS}\n")
+        fh.write(f"# Birks   : B_1 = {m_birks.values['B_1']:.5g} +- {m_birks.errors['B_1']:.3g}, "
+                 f"k = {m_birks.values['k']:.5g} +- {m_birks.errors['k']:.3g}, "
+                 f"chi2/ndof = {m_birks.fval:.4g}/{ndof_birks}\n")
+        for e, y, lo, up in zip(efields, mean_rel_ly, err_low, err_up):
+            fh.write(f"{e:.6f} {y:.6f} {lo:.6f} {up:.6f}\n")
+    print(f"figure: {figure_path}\ntable : {table_path}")
+
+    if INTERACTIVE:
+        plt.show()
 
 if __name__ == "__main__":
     main()

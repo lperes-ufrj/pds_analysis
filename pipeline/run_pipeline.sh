@@ -9,6 +9,7 @@
 #   --stages LIST        comma list of coincidence,selection,fit (default: all)
 #   --force LIST         redo these stages even when their outputs exist
 #   --dry-run            print the commands without running them
+#   --print-tag          print the cut set's coincidence tag and exit
 #
 # Environment:
 #   PYTHON      interpreter for the fit (default: python3)
@@ -20,8 +21,11 @@
 #                                               settings (COINC_TAG is derived
 #                                               from them, so a cached pass is
 #                                               reused automatically)
-#   coincidence/selected_waveforms/CUTSET/      cut flow, mean waveforms, fprompt
-#   $PDS_OUTPUT/pipeline/CUTSET/RUNSET/         fit plots and parameter tables
+#   coincidence/selected_waveforms/COINC_TAG/   cut flow, mean waveforms, fprompt
+#                                               (same name as the coincidence
+#                                               folder: one tag labels the sample)
+#   $PDS_OUTPUT/pipeline/CUTSET/RUNSET/         fit plots, parameter tables and a
+#                                               copy of the cut flow it was fitted on
 #
 # Each stage is cached per run with a .done_RUN marker, so a reduced pass
 # followed by a full pass only processes the runs that are new.
@@ -32,7 +36,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 PYTHON=${PYTHON:-python3}
 
-usage() { sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "Error: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- arguments
@@ -44,12 +48,14 @@ RUN_SET=reduced
 STAGES=coincidence,selection,fit
 FORCE=
 DRY_RUN=0
+PRINT_TAG=0
 while (($#)); do
     case $1 in
         --runs)    RUN_SET=${2:?--runs needs a value}; shift 2 ;;
         --stages)  STAGES=${2:?--stages needs a value}; shift 2 ;;
         --force)   FORCE=${2:?--force needs a value}; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --print-tag) PRINT_TAG=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option $1" ;;
     esac
@@ -121,7 +127,7 @@ COINC_TAG=c_${TRIGGER}_w${WINDOW_TICKS}_a${MIN_AMPLITUDE_ADC}_r${RATE_LABEL:-def
 COINC_TAG=${COINC_TAG//[^A-Za-z0-9_-]/-}
 
 COINC_DIR=$REPO_DIR/coincidence/saved_coincidences/$COINC_TAG
-SELECT_DIR=$REPO_DIR/coincidence/selected_waveforms/$CUTSET
+SELECT_DIR=$REPO_DIR/coincidence/selected_waveforms/$COINC_TAG
 OUTPUT_ROOT=${PDS_OUTPUT:-$REPO_DIR/output}
 FIT_DIR=$OUTPUT_ROOT/pipeline/$CUTSET/$RUN_SET
 
@@ -134,6 +140,11 @@ SELECTION_SETTINGS=$(
     echo "max_full_range_adc=$MAX_FULL_RANGE_ADC"
     cat "$INTERVALS"
 )
+
+if ((PRINT_TAG)); then
+    echo "$COINC_TAG"
+    exit 0
+fi
 
 mapfile -t RUN_LINES < <(cd "$REPO_DIR" && "$PYTHON" -m pds.runs "$RUN_SET")
 ((${#RUN_LINES[@]})) || die "no runs in run set $RUN_SET"
@@ -209,8 +220,10 @@ if has "$STAGES" selection; then
     if has "$FORCE" selection; then
         ((DRY_RUN)) || rm -f "$SELECT_DIR"/.done_* "$settings_file"
     elif [[ -f $settings_file ]] && [[ $(cat "$settings_file") != "$SELECTION_SETTINGS" ]]; then
-        die "cut set $CUTSET changed since its selection ran in $SELECT_DIR.
-       Rerun with --force selection, or save the new cuts under a new name."
+        die "$SELECT_DIR holds a selection made with other waveform cuts.
+       Either cut set $CUTSET changed since its selection ran, or another cut set
+       with the same coincidence settings selected into this folder.
+       Rerun with --force selection to replace it (fits of other cut sets are kept)."
     fi
     # written only when new, so its time stamp marks the last real change
     # (the fit stage reruns when it is newer than the fit)
@@ -259,8 +272,17 @@ if has "$STAGES" fit; then
         echo "[cached] fit  ($FIT_DIR)"
     else
         if ! ((DRY_RUN)); then
-            mkdir -p "$FIT_DIR"
+            settings_file=$SELECT_DIR/pipeline_selection_settings.txt
+            [[ -f $settings_file ]] \
+                || die "no selection in $SELECT_DIR; run the selection stage first"
+            [[ $(cat "$settings_file") == "$SELECTION_SETTINGS" ]] \
+                || die "$SELECT_DIR holds another cut set's selection (different waveform cuts).
+       Rerun with --stages selection,fit --force selection to fit cut set $CUTSET."
+            mkdir -p "$FIT_DIR/selection"
             cp "$CUTSET_FILE" "$FIT_DIR/cutset.env"
+            # the cut flow this fit was made on: the selection folder may later
+            # be replaced by another cut set sharing the coincidence tag
+            cp "$settings_file" "$SELECT_DIR"/selection_cuts_*.txt "$FIT_DIR/selection/"
         fi
         for module in $MODULES; do
             echo "---- fit  $module"

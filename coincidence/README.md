@@ -112,7 +112,11 @@ The shared peak finder in `coincidence_lib.cpp` is unchanged:
 - Smoothing: `PEAK_SMOOTHING_WINDOW = 10`. Its existing indexing averages
   samples `n-5` through `n+5` inclusive (11 interior samples), truncating at edges.
 - Peak threshold: `max(500 ADC, 10 * noiseRms)`, where `noiseRms` is the
-  population standard deviation about the noise mean.
+  population standard deviation about the noise mean. Both numbers can be
+  changed in the INI file with an optional `[peak_finder]` section
+  (`min_height_adc`, `min_height_sigma`); `plot_wfs_coincidence` uses the
+  same finder, and its full-waveform amplitude cut (default 10000 ADC) is set
+  with `--max-full-range-amplitude`.
 - Candidates: interior local maxima with `smoothed[n] > smoothed[n-1]` and
   `smoothed[n] >= smoothed[n+1]`, at or above the threshold.
 - Primary peak: highest candidate; additional outside peaks are flagged when

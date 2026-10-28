@@ -33,7 +33,7 @@ using waveform_plotting::plotAllWaveformsForSelection;
 using waveform_plotting::plotAndSaveStatistics;
 
 constexpr double DEFAULT_MAX_AUXILIARY_AMPLITUDE = 500.0;
-constexpr double MAX_FULL_RANGE_AMPLITUDE = 10000.0;
+constexpr double DEFAULT_MAX_FULL_RANGE_AMPLITUDE = 10000.0;
 
 struct Options {
     fs::path input_list;
@@ -41,6 +41,7 @@ struct Options {
     fs::path output_dir;
     fs::path csv_file;
     double max_auxiliary_amplitude = DEFAULT_MAX_AUXILIARY_AMPLITUDE;
+    double max_full_range_amplitude = DEFAULT_MAX_FULL_RANGE_AMPLITUDE;
 };
 
 struct CoincidenceOutputIdentity {
@@ -164,6 +165,7 @@ void printUsage(const char *program)
         << "  --output-dir DIR             Output directory\n"
         << "  --csv FILE                   run_coincidence output CSV (required)\n"
         << "  --max-auxiliary-amplitude N  Noise/post-signal limit in ADC (default: 500)\n"
+        << "  --max-full-range-amplitude N Full-waveform amplitude limit in ADC (default: 10000)\n"
         << "  -h, --help                    Show this help\n";
 }
 
@@ -181,12 +183,15 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
         }
         if (argument == "--config" || argument == "--output-dir"
             || argument == "--csv"
-            || argument == "--max-auxiliary-amplitude") {
+            || argument == "--max-auxiliary-amplitude"
+            || argument == "--max-full-range-amplitude") {
             if (++index >= argc) throw std::runtime_error("Missing value for " + argument);
             if (argument == "--config") options.config = argv[index];
             else if (argument == "--output-dir") options.output_dir = argv[index];
             else if (argument == "--csv") options.csv_file = argv[index];
-            else options.max_auxiliary_amplitude = std::stod(argv[index]);
+            else if (argument == "--max-auxiliary-amplitude") {
+                options.max_auxiliary_amplitude = std::stod(argv[index]);
+            } else options.max_full_range_amplitude = std::stod(argv[index]);
             continue;
         }
         if (!argument.empty() && argument.front() == '-') {
@@ -217,6 +222,12 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
         || options.max_auxiliary_amplitude < 0.0) {
         throw std::runtime_error(
             "Maximum auxiliary amplitude must be a finite, non-negative value"
+        );
+    }
+    if (!std::isfinite(options.max_full_range_amplitude)
+        || options.max_full_range_amplitude < 0.0) {
+        throw std::runtime_error(
+            "Maximum full-range amplitude must be a finite, non-negative value"
         );
     }
     return options;
@@ -421,7 +432,8 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     unsigned int channel,
     double baseline,
     const WaveformAnalyzer &analyzer,
-    double max_auxiliary_amplitude
+    double max_auxiliary_amplitude,
+    double max_full_range_amplitude
 )
 {
     // Keep these calculations and strict boundaries synchronized with the old
@@ -436,7 +448,7 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     const bool fails_noise = noise_amplitude > max_auxiliary_amplitude;
     const bool fails_post_signal = post_signal_amplitude > max_auxiliary_amplitude;
     const double amplitude = fullRangeAmplitude(adc, baseline);
-    const bool fails_full_range_amplitude = amplitude > MAX_FULL_RANGE_AMPLITUDE;
+    const bool fails_full_range_amplitude = amplitude > max_full_range_amplitude;
     const PeakSearchResult peak = analyzer.findPeak(adc, channel);
     const bool fails_primary_peak = peak.primary_outside_signal_region;
     const bool fails_additional_peak = peak.additional_outside_signal_region;
@@ -454,7 +466,8 @@ WaveformSelections loadWaveforms(
     TChain &chain,
     const std::vector<LocatedWaveform> &located,
     const WaveformAnalyzer &analyzer,
-    double max_auxiliary_amplitude
+    double max_auxiliary_amplitude,
+    double max_full_range_amplitude
 )
 {
     chain.ResetBranchAddresses();
@@ -485,7 +498,8 @@ WaveformSelections loadWaveforms(
             item.key.channel,
             baseline,
             analyzer,
-            max_auxiliary_amplitude
+            max_auxiliary_amplitude,
+            max_full_range_amplitude
         );
 
         rejected_noise += item.multiplicity
@@ -526,7 +540,7 @@ WaveformSelections loadWaveforms(
         << " ADC: " << rejected_noise << '\n'
         << "  Post-signal amplitude above " << max_auxiliary_amplitude
         << " ADC: " << rejected_post_signal << '\n'
-        << "  Full-range amplitude above " << MAX_FULL_RANGE_AMPLITUDE
+        << "  Full-range amplitude above " << max_full_range_amplitude
         << " ADC over baseline: " << rejected_full_range_amplitude << '\n'
         << "  Primary peak outside signal region: "
         << rejected_primary_peak_outside_signal << '\n'
@@ -555,6 +569,7 @@ void writeCutSummary(
     std::size_t selected_rows,
     std::size_t unique_located_waveforms,
     double max_auxiliary_amplitude,
+    double max_full_range_amplitude,
     const WaveformAnalyzer &analyzer,
     const CutStatistics &cuts,
     const RecordsByChannel &final_selection
@@ -583,9 +598,12 @@ void writeCutSummary(
            << "2. Post-signal maximum ADC minus noise median <= "
            << max_auxiliary_amplitude << " ADC\n"
            << "3. Full-waveform positive amplitude above baseline <= "
-           << MAX_FULL_RANGE_AMPLITUDE << " ADC\n"
+           << max_full_range_amplitude << " ADC\n"
            << "4. Primary peak must be inside the configured signal region\n"
            << "5. No significant additional peak may be outside the signal region\n"
+           << "   Significant peak: smoothed height >= max("
+           << analyzer.minimumPeakHeightAdc() << " ADC, "
+           << analyzer.minimumPeakHeightSigma() << " * noise RMS)\n"
            << "------------------------------------------------\n";
 
     for (const unsigned int channel : channels) {
@@ -775,7 +793,8 @@ void processInputList(
     std::cout << "Located ROOT entries: " << located.size() << '\n';
     const WaveformAnalyzer analyzer(options.config.string());
     const auto selections = loadWaveforms(
-        *chain, located, analyzer, options.max_auxiliary_amplitude
+        *chain, located, analyzer, options.max_auxiliary_amplitude,
+        options.max_full_range_amplitude
     );
     const std::string label = csv_file.stem().string();
     const fs::path cut_summary = options.output_dir
@@ -791,6 +810,7 @@ void processInputList(
         selected_rows,
         located.size(),
         options.max_auxiliary_amplitude,
+        options.max_full_range_amplitude,
         analyzer,
         selections.cuts,
         selections.final_selection

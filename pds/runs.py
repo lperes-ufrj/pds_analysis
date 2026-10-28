@@ -30,6 +30,40 @@ for _kv, _run in EF_SCAN_DOWN.items():
     FIELD_OF_RUN.setdefault(_run, (_kv, "down"))
 
 
+# HV label [kV] -> run number, high-field scan (Sep 2026). Each HV was taken
+# twice; the first run of each pair is used (the second ones are 043381 at
+# 240 kV, 043384 at 205 kV, 043387 at 270 kV and 043390 at 154 kV). 041523 is
+# the 292 kV rate-equalization reference and has no equalized threshold file.
+EF_SCAN_HIGH = {
+    154: "043389", 205: "043383", 240: "043380", 270: "043386", 292: "041523",
+}
+for _kv, _run in EF_SCAN_HIGH.items():
+    FIELD_OF_RUN.setdefault(_run, (_kv, "high"))
+
+# Field points used by the template-convolved fits (fit/waveform_fits/): the
+# rising branch below 155.7 kV plus the high-field scan. The falling branch is
+# left out on purpose; it only repeats fields that are already here.
+FIT_SCAN = {kv: run for kv, run in EF_SCAN_UP.items()}
+FIT_SCAN.update(EF_SCAN_HIGH)
+FIT_SCAN = dict(sorted(FIT_SCAN.items()))
+
+# Reduced scan for fast cut-validation passes (pipeline/run_pipeline.sh):
+# 7 fields covering 0-292 kV, 4 of them at <= 40 kV where most field effects
+# show. 0 kV must stay in: the fits normalize every field to its peak.
+REDUCED_FIELDS = (0, 10, 20, 40, 100, 205, 292)
+REDUCED_SCAN = {kv: FIT_SCAN[kv] for kv in REDUCED_FIELDS}
+
+RUN_SETS = {"reduced": REDUCED_SCAN, "full": FIT_SCAN}
+
+
+def run_set(name):
+    """{HV [kV]: run} of a named run set ("reduced" or "full"), ascending HV."""
+    try:
+        return dict(RUN_SETS[name])
+    except KeyError:
+        raise ValueError(f"unknown run set {name!r}; valid: {', '.join(RUN_SETS)}")
+
+
 def runs_of(branch="up"):
     """Ordered [(HV, run)] of a branch ("up", "down" or "all").
 
@@ -55,3 +89,10 @@ def field_of(run):
     """HV [kV] of a run, or None if the run is not in the scan."""
     entry = FIELD_OF_RUN.get(str(run))
     return entry[0] if entry else None
+
+
+if __name__ == "__main__":
+    # Shell helper: `python3 -m pds.runs reduced` prints "HV run" per line.
+    import sys
+    for _kv, _run in run_set(sys.argv[1] if len(sys.argv) > 1 else "reduced").items():
+        print(_kv, _run)

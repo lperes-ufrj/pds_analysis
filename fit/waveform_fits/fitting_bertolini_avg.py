@@ -3,7 +3,22 @@
 Unica diferenca: o espectro ajustado e a media de channel_2080 e
 channel_2081, e o kernel e a media dos kernels dos templates
 correspondentes (M8_1 <-> 2080, M8_2 <-> 2081). O resto e identico.
+
+Usage:
+    python fitting_bertolini_avg.py [MODULE] [options]
+
+Without options it reads the coincidence rounds hard-coded in MODULE_CONFIG
+and fits every field of pds.runs.FIT_SCAN, as before. The options below are
+what pipeline/run_pipeline.sh uses to fit one cut set:
+
+    --selection-dir DIR   folder with the channel_<ch>_coincidence_scan_*.csv
+    --coinc-tag TAG       run_coincidence tag in those file names
+    --run-set NAME        "full" (default) or "reduced" (pds/runs.py)
+    --fields LIST         comma-separated HV list, overrides --run-set
+    --out-dir DIR         output folder (default $PDS_OUTPUT/fit/waveform_fits)
+    --batch               no interactive Minuit windows (also when no TTY)
 """
+import argparse
 import os
 import sys
 
@@ -20,7 +35,32 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_
 REPO_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))   # <repo>
 sys.path.insert(0, REPO_DIR)
 from pds import paths  # noqa: E402
-OUT_DIR = str(paths.FIT_DIR / 'waveform_fits')            # plots and parameters
+from pds.runs import FIT_SCAN, run_set  # noqa: E402
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Template-convolved fit of the module-averaged mean waveform.')
+    parser.add_argument('module', nargs='?', default=None,
+                        help='M8, M5 or M6 (menu if omitted)')
+    parser.add_argument('--selection-dir', default=None,
+                        help='folder with the per-channel aggregate CSVs')
+    parser.add_argument('--coinc-tag', default=None,
+                        help='run_coincidence tag in the CSV names '
+                             '(default: the folder name of --selection-dir)')
+    parser.add_argument('--run-set', default='full', choices=('full', 'reduced'))
+    parser.add_argument('--fields', default=None,
+                        help='comma-separated HV list in kV, e.g. 0,10,20')
+    parser.add_argument('--out-dir', default=None)
+    parser.add_argument('--batch', action='store_true',
+                        help='skip the interactive Minuit windows')
+    return parser.parse_args()
+
+
+ARGS = parse_args()
+INTERACTIVE = not ARGS.batch and sys.stdin.isatty()
+
+OUT_DIR = ARGS.out_dir or str(paths.FIT_DIR / 'waveform_fits')  # plots and parameters
 
 SAMPLE = 16  # ns
 
@@ -101,12 +141,12 @@ def escolhe_modulo():
     Sem terminal interativo (pipe, nohup, batch) cai no MODULE_DEFAULT em
     vez de travar num input() que ninguem vai responder."""
 
-    if len(sys.argv) > 1:
-        arg = sys.argv[1].strip().upper()
+    if ARGS.module:
+        arg = ARGS.module.strip().upper()
 
         if arg not in MODULE_CONFIG:
             raise SystemExit(
-                f'modulo invalido: {sys.argv[1]!r}. '
+                f'modulo invalido: {ARGS.module!r}. '
                 f'Validos: {", ".join(MODULE_CONFIG)}')
 
         return arg
@@ -149,6 +189,13 @@ CFG = MODULE_CONFIG[MODULE]
 
 
 def coincidence_file(run, ch):
+    if ARGS.selection_dir:
+        # cut set from pipeline/run_pipeline.sh: the folder holds one cut
+        # set, the file names carry the run_coincidence tag
+        tag = ARGS.coinc_tag or os.path.basename(os.path.normpath(ARGS.selection_dir))
+        return os.path.join(ARGS.selection_dir,
+                            PATTERN_NEW.format(ch=ch, run=run, scan=tag))
+
     sub = f'{CFG["subdir"]}/' if CFG['subdir'] else ''
 
     return (REPO_DIR + '/coincidence/selected_waveforms/'
@@ -338,42 +385,26 @@ plt.close(fig)
 
 # Coincidence runs
 
-runs = {
-    0:     39510,
-    10:    39511,
-    20:    39512,
-    30:    39514,
-    40:    39515,
-    50:    39516,
-    60:    39517,
-    70:    39518,
-    80:    39519,
-    90:    39521,
-    100:   39522,
-    110:   39523,
-    120:   39525,
-    130:   39526,
-    140:   39527,
-    150:   39528,
-    # Scan de HV alto (set/2026). Cada HV tem dois runs; usamos o primeiro
-    # de cada par -- os segundos sao 43381 (240), 43384 (205), 43387 (270),
-    # 43390 (154). Ordem crescente em campo para o seeding sequencial do fit.
-    #
-    # 41523 = 292 kV e o campo mais alto do scan (0.834 kV/cm). O HV de cada
-    # run vem do nome dos ROOT de entrada, listados no
-    # coincidence_scan_<timestamp>.txt da rodada.
-    #
-    # Os runs 39500-39508 (scan DESCENDO, 155.7 -> 20 kV) ficam de fora de
-    # proposito: todo HV deles ja aparece no scan subindo, entao nao trazem
-    # campo novo -- so serviriam como teste de histerese, que nao e o objetivo
-    # aqui. Se um dia entrarem, a chave do dict precisa deixar de ser o campo.
-    154:   43389,
-    155.7: 39529,
-    205:   43383,
-    240:   43380,
-    270:   43386,
-    292:   41523
-}
+# Field -> run map, from pds/runs.py (FIT_SCAN: rising branch up to
+# 155.7 kV plus the Sep 2026 high-HV scan, first run of each HV pair; 41523 =
+# 292 kV is the highest field, 0.834 kV/cm). The falling branch 39500-39508 is
+# left out on purpose: it repeats fields that are already here, so it would
+# only test hysteresis. Keys are in ascending field, needed by the sequential
+# seeding of the fit.
+if ARGS.fields:
+    _wanted = [float(f) for f in ARGS.fields.split(',') if f.strip()]
+    _missing = [f for f in _wanted if f not in FIT_SCAN]
+    if _missing:
+        raise SystemExit(f'fields not in pds.runs.FIT_SCAN: {_missing}')
+    runs = {kv: run for kv, run in FIT_SCAN.items() if kv in _wanted}
+else:
+    runs = run_set(ARGS.run_set)
+
+runs = {kv: int(run) for kv, run in sorted(runs.items())}
+
+if 0 not in runs:
+    raise SystemExit('the fit normalizes every field to the E = 0 peak; '
+                     'the field list must include 0 kV')
 
 runs = {f: r for f, r in runs.items() if f not in CFG['skip_fields']}
 
@@ -516,7 +547,7 @@ for field, run in runs.items():
     m.fixed['tau_fast'] = True
 
     # descomente para reabrir o painel interativo num campo especifico
-    if field == 0:
+    if field == 0 and INTERACTIVE:
         m.interactive()
 
     m.migrad()
@@ -854,7 +885,8 @@ m_tau.limits['alpha'] = (0.1, 5.0)
 m_tau.limits['beta'] = (0, 5.0)
 m_tau.limits['k_E'] = (0.001, 2.0)
 
-m_tau.interactive()
+if INTERACTIVE:
+    m_tau.interactive()
 m_tau.migrad()
 m_tau.hesse()
 
@@ -1021,6 +1053,7 @@ _meta_common = [
     f'janela do fit : {FIT_MIN} - {FIT_MAX} us',
     f'tau_fast      : FIXO em {TAU_FAST_FIXED} us',
     f'yerr          : YERR_MODE = {YERR_MODE}',
+    f'dados         : {os.path.dirname(coincidence_file(runs[0], CHANNELS[0]))}',
     'unidades      : campo em kV (HV) e kV/cm; tempos em us; '
     'amplitudes e integrais normalizadas pelo pico de E = 0',
 ]

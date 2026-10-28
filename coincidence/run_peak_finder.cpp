@@ -314,7 +314,8 @@ void writeSummary(
     const fs::path &filename,
     const Options &options,
     const std::vector<std::string> &files,
-    const ScanResult &result
+    const ScanResult &result,
+    const WaveformAnalyzer &analyzer
 )
 {
     std::ofstream output(filename);
@@ -331,7 +332,9 @@ void writeSummary(
     output << '\n'
            << "Peak finder: WaveformAnalyzer::findPeak, PEAK_SMOOTHING_WINDOW = 10\n"
            << "Smoothing: inclusive +/-5 samples (11 interior samples), truncated at edges\n"
-           << "Peak height threshold: max(500 ADC, 10 * noise population standard deviation)\n"
+           << "Peak height threshold: max(" << analyzer.minimumPeakHeightAdc()
+           << " ADC, " << analyzer.minimumPeakHeightSigma()
+           << " * noise population standard deviation)\n"
            << "Baseline: median of configured noise interval\n"
            << "Selection: !saturated && peak_found && !primary_outside_signal_region"
            << " && !additional_outside_signal_region\n"
@@ -387,7 +390,7 @@ int main(int argc, char **argv)
         std::cout << "\nRejecting raw ADC >= " << options.saturation_adc << '\n'
                   << "Output: " << csv_file << std::endl;
         const auto result = scanWaveforms(chain, analyzer, csv_file, options);
-        writeSummary(output_dir / (label + ".txt"), options, files, result);
+        writeSummary(output_dir / (label + ".txt"), options, files, result, analyzer);
         if (result.selected == 0) {
             std::cout << "No waveforms passed peak selection; CSV and summary saved.\n";
             return 0;

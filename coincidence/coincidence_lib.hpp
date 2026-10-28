@@ -47,6 +47,10 @@ public:
     ) const;
     int signalPeakTick(const std::vector<short> &waveform, unsigned int channel) const;
     double noiseRms(const std::vector<short> &waveform, unsigned int channel) const;
+    // Peak-finder threshold: max(minimumPeakHeightAdc, minimumPeakHeightSigma * noise RMS).
+    // Set with an optional [peak_finder] section in the INI file.
+    double minimumPeakHeightAdc() const { return minimum_peak_height_adc_; }
+    double minimumPeakHeightSigma() const { return minimum_peak_height_sigma_; }
     int pulseStart(const std::vector<short> &waveform, unsigned int channel) const;
     // Baseline-subtracted prompt charge divided by the total signal charge.
     double fprompt(const std::vector<short> &waveform, unsigned int channel) const;
@@ -62,6 +66,8 @@ public:
 private:
     using Intervals = std::unordered_map<std::string, std::pair<int, int>>;
     std::unordered_map<unsigned int, Intervals> intervals_;
+    double minimum_peak_height_adc_;
+    double minimum_peak_height_sigma_;
 
     std::pair<int, int> checkedRegion(
         const std::vector<short> &waveform,

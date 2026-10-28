@@ -29,6 +29,7 @@ pds_analysis/
 │   └── waveform_fits/  template-convolved fits (Bertolini, Xe transfer, toy MC)
 ├── analysis/        step 5: rate equalization, LY vs E-field, LY vs Xe ppm,
 │                    charge-based evaluation, fit comparisons
+├── pipeline/        coincidence -> selection -> fit per cut set, reduced (7 fields) or full scan
 ├── reference/       small, tracked reference inputs
 │   ├── spe_templates/francesca/   external SPE templates (txt)
 │   └── large_pulse_templates/     large-pulse templates + cuts used
@@ -143,6 +144,18 @@ python3 deconvolution/filter_large_pulses.py <coincident_waveforms.root>
 python3 fit/all_electric_field.py [template] [column]
 python3 fit/fit_vs_field.py [template]
 python3 fit/waveform_fits/fitting_bertolini_avg.py   # template-convolved fit per field
+```
+
+### Steps 2-4 in one go, per cut set
+
+[`pipeline/run_pipeline.sh`](pipeline/README.md) chains coincidence, waveform
+selection and the template-convolved fit for a cut set defined in
+`pipeline/cutsets/*.env`, on 7 fields (`--runs reduced`, default) or on the
+full scan (`--runs full`). `pipeline/compare_cutsets.py` overlays the results.
+
+```bash
+pipeline/run_pipeline.sh baseline
+python3 pipeline/compare_cutsets.py baseline tight_aux
 ```
 
 ### 5. Physics analyses

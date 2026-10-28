@@ -13,8 +13,8 @@
 namespace {
 
 constexpr std::size_t PEAK_SMOOTHING_WINDOW = 10;
-constexpr double MINIMUM_PEAK_HEIGHT_ADC = 500.0;
-constexpr double MINIMUM_PEAK_HEIGHT_SIGMA = 10.0;
+constexpr double DEFAULT_MINIMUM_PEAK_HEIGHT_ADC = 500.0;
+constexpr double DEFAULT_MINIMUM_PEAK_HEIGHT_SIGMA = 10.0;
 
 struct PeakCandidate {
     int tick = -1;
@@ -32,12 +32,15 @@ std::string trimIntervalLine(const std::string &text)
 }  // namespace
 
 WaveformAnalyzer::WaveformAnalyzer(const std::string &ini_file)
+    : minimum_peak_height_adc_(DEFAULT_MINIMUM_PEAK_HEIGHT_ADC),
+      minimum_peak_height_sigma_(DEFAULT_MINIMUM_PEAK_HEIGHT_SIGMA)
 {
     std::ifstream input(ini_file);
     if (!input) throw std::runtime_error("Could not open config file: " + ini_file);
 
     unsigned int current_channel = 0;
     bool in_channel_section = false;
+    bool in_peak_finder_section = false;
     std::string line;
 
     while (std::getline(input, line)) {
@@ -48,18 +51,31 @@ WaveformAnalyzer::WaveformAnalyzer(const std::string &ini_file)
             const std::string section = line.substr(1, line.size() - 2);
             constexpr const char prefix[] = "channel_";
             in_channel_section = section.rfind(prefix, 0) == 0;
+            in_peak_finder_section = section == "peak_finder";
             if (in_channel_section) {
                 current_channel = static_cast<unsigned int>(std::stoul(section.substr(8)));
             }
             continue;
         }
 
-        if (!in_channel_section) continue;
+        if (!in_channel_section && !in_peak_finder_section) continue;
         const auto equals = line.find('=');
         if (equals == std::string::npos) continue;
 
         const std::string name = trimIntervalLine(line.substr(0, equals));
         const std::string value = trimIntervalLine(line.substr(equals + 1));
+
+        if (in_peak_finder_section) {
+            const double number = std::stod(value);
+            if (!std::isfinite(number) || number < 0.0) {
+                throw std::runtime_error("Invalid [peak_finder] value in config: " + line);
+            }
+            if (name == "min_height_adc") minimum_peak_height_adc_ = number;
+            else if (name == "min_height_sigma") minimum_peak_height_sigma_ = number;
+            else throw std::runtime_error("Unknown [peak_finder] key in config: " + name);
+            continue;
+        }
+
         const auto colon = value.find(':');
         if (colon == std::string::npos) {
             throw std::runtime_error("Invalid interval in config: " + line);
@@ -221,8 +237,8 @@ PeakSearchResult WaveformAnalyzer::findPeak(
 
     const double waveform_baseline = noiseBaseline(waveform, channel);
     const double minimum_height = std::max(
-        MINIMUM_PEAK_HEIGHT_ADC,
-        MINIMUM_PEAK_HEIGHT_SIGMA * noiseRms(waveform, channel)
+        minimum_peak_height_adc_,
+        minimum_peak_height_sigma_ * noiseRms(waveform, channel)
     );
 
     const std::size_t half_window = PEAK_SMOOTHING_WINDOW / 2;

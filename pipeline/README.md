@@ -4,12 +4,19 @@ Runs coincidence → waveform selection → mean-waveform fit for one **cut set*
 on a reduced set of 7 fields (fast, for validating cuts) or on the full scan.
 `TRIGGER=no_coinc` skips the coincidence (see below).
 
+Start from the two editable templates, which list every option with its
+alternatives. They are identical except for `RUN_SET`:
+
 ```bash
-pipeline/run_pipeline.sh baseline                  # 7 fields: 0 10 20 40 100 205 292 kV
-pipeline/run_pipeline.sh tight_aux                 # a variation
-python3 pipeline/compare_cutsets.py baseline tight_aux
-pipeline/run_pipeline.sh baseline --runs full      # once the cuts are settled
+pipeline/run_pipeline.sh baseline_fast             # 7 fields: 0 10 20 40 100 205 292 kV
+pipeline/run_pipeline.sh baseline_all              # 22 fields, once the cuts are settled
+python3 pipeline/compare_cutsets.py baseline_fast  # efficiency and fit summary
+python3 pipeline/compare_cutsets.py --runs full baseline_all
 ```
+
+With the same settings both share one sample, so `baseline_all` only
+processes the 15 runs `baseline_fast` did not. `--runs reduced|full`
+overrides the file's `RUN_SET`.
 
 The run sets live in [`pds/runs.py`](../pds/runs.py) (`REDUCED_FIELDS`,
 `FIT_SCAN`). The reduced set has 4 fields at ≤ 40 kV, where most field
@@ -39,10 +46,12 @@ One file per cut set in `cutsets/NAME.env`. `NAME` names the fit outputs; the
 coincidence and selection folders are named by the coincidence tag
 (`pipeline/run_pipeline.sh NAME --print-tag`), so one label identifies a
 sample everywhere, as with the older `YYYYMMDD_HHMMSS` rounds.
-Copy [`cutsets/baseline.env`](cutsets/baseline.env) (the production settings) and change it.
+Copy [`cutsets/baseline_fast.env`](cutsets/baseline_fast.env) or
+[`cutsets/baseline_all.env`](cutsets/baseline_all.env) and change it.
 
 | Variable | Stage | Meaning |
 |---|---|---|
+| `RUN_SET` | all | `reduced` (default, 7 fields) or `full` (22 fields); `--runs` overrides |
 | `TRIGGER` | all | which sample, see the table below |
 | `LEFT_CHANNELS`, `RIGHT_CHANNELS`, `SAVE_CHANNELS` | coincidence | `custom_coinc` only: trigger channels and saved channels (numbers and/or `all`, `cathode`, `membrane`) |
 | `WINDOW_TICKS` | coincidence | coincidence window |

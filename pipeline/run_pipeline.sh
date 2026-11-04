@@ -8,7 +8,8 @@
 #   pipeline/run_pipeline.sh CUTSET [options]
 #
 #   CUTSET               pipeline/cutsets/NAME.env, or a path to a .env file
-#   --runs reduced|full  run set from pds/runs.py (default: reduced, 7 fields)
+#   --runs reduced|full  run set from pds/runs.py; overrides RUN_SET of the cut
+#                        set (default: reduced, 7 fields; full: 22 fields)
 #   --stages LIST        comma list of coincidence,selection,fit (default: all)
 #   --force LIST         redo these stages even when their outputs exist
 #   --dry-run            print the commands without running them
@@ -41,7 +42,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 PYTHON=${PYTHON:-python3}
 
-usage() { sed -n '2,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "Error: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- arguments
@@ -49,14 +50,14 @@ die() { echo "Error: $*" >&2; exit 1; }
 case $1 in -h|--help) usage; exit 0 ;; esac
 
 CUTSET_ARG=$1; shift
-RUN_SET=reduced
+RUNS_OPTION=
 STAGES=coincidence,selection,fit
 FORCE=
 DRY_RUN=0
 PRINT_TAG=0
 while (($#)); do
     case $1 in
-        --runs)    RUN_SET=${2:?--runs needs a value}; shift 2 ;;
+        --runs)    RUNS_OPTION=${2:?--runs needs a value}; shift 2 ;;
         --stages)  STAGES=${2:?--stages needs a value}; shift 2 ;;
         --force)   FORCE=${2:?--force needs a value}; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
@@ -85,7 +86,7 @@ done
 # ------------------------------------------------------------------ cut set
 MODE= TRIGGER= WINDOW_TICKS= MIN_AMPLITUDE_ADC= RATE_THRESHOLDS= INTERVALS=
 MAX_AUX_ADC= MAX_FULL_RANGE_ADC= MODULES= CHANNELS= REQUIRE_PEAK= MAX_WAVEFORMS=
-CHANNELS_PER_PASS= TEMPLATES= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS=
+CHANNELS_PER_PASS= TEMPLATES= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS= RUN_SET=
 # shellcheck source=/dev/null
 source "$CUTSET_FILE"
 [[ -z $MODE ]] || die "MODE is no longer used: write TRIGGER=no_coinc instead of MODE=single
@@ -94,6 +95,9 @@ REQUIRE_PEAK=${REQUIRE_PEAK:-0}
 MAX_WAVEFORMS=${MAX_WAVEFORMS:-0}
 CHANNELS_PER_PASS=${CHANNELS_PER_PASS:-4}
 TEMPLATES=${TEMPLATES:-large_pulse}
+RUN_SET=${RUNS_OPTION:-${RUN_SET:-reduced}}
+case $RUN_SET in reduced|full) ;;
+    *) die "run set must be 'reduced' or 'full', got '$RUN_SET'" ;; esac
 
 # TRIGGER picks the sample (LArSoft map: Mk -> 20k0 20k1, Ck -> 10k0 10k1):
 #   default_coinc  trigger M3+M4 (2030..2041) vs M5+M6 (2050..2061), saves M7+M8

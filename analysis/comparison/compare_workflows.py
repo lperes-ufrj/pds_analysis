@@ -2,8 +2,12 @@
 tau fits and light yield vs field.
 
 Usage:
-    python analysis/comparison/compare_workflows.py WORKFLOW[:RUNSET] [...]
+    python analysis/comparison/compare_workflows.py [WORKFLOW[:RUNSET] ...]
         [--modules M8,M5] [--name NAME] [--out DIR]
+
+    Without WORKFLOW: scans coincidence/selected_waveforms/ and asks, tag by
+    tag, whether to include the fit made on it (y/n, a = all the rest,
+    q = stop asking); selections without a fit are listed, not offered.
 
     WORKFLOW   a cut-set name, i.e. a folder $PDS_OUTPUT/pipeline/WORKFLOW/
                filled by pipeline/run_pipeline.sh. Its run set is the one
@@ -54,6 +58,7 @@ MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
 REFERENCE_GRAY = "#8a8a85"
 
 PIPELINE_DIR = paths.OUTPUT_DIR / "pipeline"
+SELECTED_DIR = REPO_DIR / "coincidence" / "selected_waveforms"
 SETTING_RE = re.compile(r"^\s*([A-Z][A-Z0-9_]*)=(.*)$")
 BIRKS_RE = re.compile(r"B_1 = (\S+) \+- (\S+), k = (\S+) \+- (\S+), chi2/ndof = (\S+)/(\d+)")
 
@@ -96,6 +101,61 @@ class Workflow:
     @property
     def label(self):
         return f"{self.name} ({self.runs})"
+
+
+def scan_fits():
+    """{sample tag: ["CUTSET:RUNSET", ...]} of the fits in PIPELINE_DIR."""
+    fits = {}
+    for info in sorted(PIPELINE_DIR.glob("*/*/sample.txt")):
+        name, runs = info.parent.parent.name, info.parent.name
+        tag = cc.sample_tag(name, runs) if runs in RUN_SETS else None
+        if tag:
+            fits.setdefault(tag, []).append(f"{name}:{runs}")
+    return fits
+
+
+def ask_workflows():
+    """Ask, tag by tag, which fits to compare; returns WORKFLOW:RUNSET specs."""
+    if not sys.stdin.isatty():
+        raise SystemExit("no workflows given, and no terminal to ask on")
+    fits = scan_fits()
+    selected = {d.name for d in SELECTED_DIR.iterdir() if d.is_dir()} if SELECTED_DIR.is_dir() else set()
+    offered = [(tag, spec) for tag in sorted(selected | set(fits)) for spec in fits.get(tag, [])]
+    unfitted = sorted(selected - set(fits))
+    if not offered:
+        raise SystemExit(f"no fits in {PIPELINE_DIR}; run the pipeline's fit and lightyield stages first")
+
+    print(f"{len(offered)} fitted sample(s). The first one you include is the reference of the ratios.")
+    print("Answer y / n (default) / a = include all the rest / q = stop asking.\n")
+    chosen, take_rest = [], False
+    for i, (tag, spec) in enumerate(offered, 1):
+        name, _, runs = spec.partition(":")
+        if not take_rest:
+            print(f"[{i}/{len(offered)}] {tag}")
+            answer = ""
+            while True:
+                answer = input(f"        fit {name} ({runs}). Include? [y/N/a/q] ").strip().lower()
+                if answer in ("", "y", "n", "a", "q"):
+                    break
+                print("        please answer y, n, a or q")
+            if answer == "q":
+                break
+            take_rest = answer == "a"
+            if answer not in ("y", "a"):
+                continue
+        chosen.append(spec)
+        if len(chosen) == len(COLORS):
+            print(f"(at most {len(COLORS)} workflows per comparison: stopping here)")
+            break
+
+    if unfitted:
+        print("\nSelections without a fit (not offered): " + ", ".join(unfitted))
+        print("  To include one, make a cut set giving that tag (pipeline/run_pipeline.sh"
+              " CUTSET --print tag)\n  and run its stages: --stages fit,lightyield")
+    if not chosen:
+        raise SystemExit("nothing chosen")
+    print("\nComparing: " + ", ".join(chosen) + "\n")
+    return chosen
 
 
 def read_settings(path):
@@ -321,13 +381,15 @@ def lightyield_section(workflows, out_dir):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("workflows", nargs="+", help="WORKFLOW or WORKFLOW:RUNSET")
+    parser.add_argument("workflows", nargs="*",
+                        help="WORKFLOW or WORKFLOW:RUNSET (none: choose interactively)")
     parser.add_argument("--modules", default=None, help="comma list; default: every fitted module")
     parser.add_argument("--name", default=None)
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
-    workflows = [Workflow(spec) for spec in args.workflows]
+    asked = not args.workflows
+    workflows = [Workflow(spec) for spec in (args.workflows or ask_workflows())]
     if len(workflows) > len(COLORS):
         raise SystemExit(f"at most {len(COLORS)} workflows per comparison (one colour each)")
     labels = [w.label for w in workflows]
@@ -336,8 +398,10 @@ def main():
 
     names = [w.name if [v.name for v in workflows].count(w.name) == 1 else f"{w.name}-{w.runs}"
              for w in workflows]
-    out_dir = Path(args.out) if args.out else (
-        paths.OUTPUT_DIR / "analysis" / "comparison" / (args.name or "_vs_".join(names)))
+    name = args.name or "_vs_".join(names)
+    if asked and not (args.name or args.out):
+        name = input(f"Output folder name [{name}]: ").strip() or name
+    out_dir = Path(args.out) if args.out else paths.OUTPUT_DIR / "analysis" / "comparison" / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.modules:

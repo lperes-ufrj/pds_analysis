@@ -6,10 +6,18 @@ their settings, how many waveforms pass the cuts, the τ fits, and the light
 yield vs field.
 
 ```bash
+python analysis/comparison/compare_workflows.py          # asks which samples to include
 python analysis/comparison/compare_workflows.py workflow_fast my_variation
 python analysis/comparison/compare_workflows.py workflow_fast:reduced workflow_all:full
 python analysis/comparison/compare_workflows.py workflow_fast my_variation --modules M8 --name aux_study
 ```
+
+Without arguments it scans `coincidence/selected_waveforms/` and asks, tag by
+tag, whether to include the fit made on it: `y`, `n` (default), `a` (all the
+rest) or `q` (stop asking), then the output folder name. Selections with no
+fit yet are listed but not offered; to add one, make a cut set that gives its
+tag (`pipeline/run_pipeline.sh CUTSET --print tag`) and run its `fit` and
+`lightyield` stages.
 
 Each workflow is a cut-set name with outputs in `$PDS_OUTPUT/pipeline/NAME/`.
 Its run set is the one after `:`, else the `RUN_SET` of its cut-set file. Run

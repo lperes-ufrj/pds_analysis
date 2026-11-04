@@ -177,9 +177,13 @@ Caveats:
   stays. Only edits to the contents of the threshold or intervals file, which
   the tag cannot show, are refused until `--force coincidence` /
   `--force selection` (the fit and light yield follow automatically).
-- The fit and light yield rerun by themselves when the selection changed or
-  gained runs, or when `MODULES`/`TEMPLATES` (fit) or `LY_CHANNELS` (light
-  yield) changed.
+- The fit and light yield go to `$PDS_OUTPUT/pipeline/CUTSET/RUN_SET/`,
+  named by the cut set, not the tag: one result per cut set and run set.
+  They rerun by themselves when the cut set's sample tag changed, when the
+  selection changed or gained runs, or when `MODULES`/`TEMPLATES` (fit) or
+  `LY_CHANNELS` (light yield) changed, and a rerun first clears the previous
+  results (cut-flow copy, module fits, light-yield tables). To keep the
+  results of two variations side by side, give each its own cut-set file.
 - `--force coincidence,selection,fit,lightyield` redoes any stage; `--stages` runs a subset;
   `--dry-run` prints the commands.
 

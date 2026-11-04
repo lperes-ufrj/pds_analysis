@@ -587,8 +587,9 @@ fi
 
 # ------------------------------------------- shared by the fit and light yield
 # A stage reading the selection is current when its MARKER holds the same
-# settings (KEY) and is newer than the last selection change and every
-# selected run of this run set.
+# settings (KEY, which starts with the sample tag: the fit folder is named by
+# the cut set, so it is reused when the cut set's tag changes) and is newer
+# than the last selection change and every selected run of this run set.
 is_current() {  # MARKER KEY
     [[ -f $1 && $(cat "$1") == "$2" ]] || return 1
     [[ $1 -nt $SELECT_DIR/pipeline_selection_settings.txt ]] || return 1
@@ -609,7 +610,7 @@ require_own_selection() {  # STAGE
 }
 
 # ---------------------------------------------------------------- stage 3
-FIT_KEY="$MODULES templates=$TEMPLATES"
+FIT_KEY="sample=$SAMPLE_TAG modules=$MODULES templates=$TEMPLATES"
 if has "$STAGES" fit; then
     if ! ((DRY_RUN)) && ! has "$FORCE" fit \
         && is_current "$FIT_DIR/.done" "$FIT_KEY"; then
@@ -625,6 +626,11 @@ if has "$STAGES" fit; then
                 "${MODULES:-none}" "$TEMPLATES" "$RUN_SET" > "$FIT_DIR/sample.txt"
             # the cut flow this fit was made on: the selection folder may later
             # be replaced (--force selection) after this fit
+            # (emptied first: a previous fit of this cut set may have been on
+            # another sample tag)
+            rm -f "$FIT_DIR/.done" "$FIT_DIR"/selection/*
+            # and fits of modules no longer in MODULES must not look current
+            rm -rf "$FIT_DIR/plots_bertolini_avg"
             cp "$settings_file" "$SELECT_DIR"/selection_cuts_*.txt "$FIT_DIR/selection/"
         fi
         [[ -n $MODULES ]] || echo "[skip] fit: MODULES is empty (cut flow copied to $FIT_DIR/selection)"
@@ -650,7 +656,7 @@ fi
 # ---------------------------------------------------------------- stage 4
 # S/S0 vs field from the integral of the mean waveforms of LY_CHANNELS (the
 # selection's channel_<ch>_*.csv), normalized to 0 kV, with a Birks fit.
-LY_KEY="channels=$LY_CHANNELS"
+LY_KEY="sample=$SAMPLE_TAG channels=$LY_CHANNELS"
 if has "$STAGES" lightyield; then
     if ! ((DRY_RUN)) && ! has "$FORCE" lightyield \
         && is_current "$LY_DIR/.done" "$LY_KEY"; then
@@ -659,7 +665,8 @@ if has "$STAGES" lightyield; then
         if ! ((DRY_RUN)); then
             require_own_selection lightyield
             mkdir -p "$LY_DIR"
-            rm -f "$LY_DIR/.done"
+            # results of a previous sample tag or channel list go
+            rm -f "$LY_DIR/.done" "$LY_DIR"/fit_LY_wo_template_chs_*
         fi
         echo "---- lightyield  channels $LY_CHANNELS"
         # shellcheck disable=SC2086

@@ -78,7 +78,10 @@ def fit_tables(cutset, runs, module):
 def efficiency(cutset, runs, run):
     """(accepted, total) summed over the saved channels, or None."""
     folder = paths.OUTPUT_DIR / "pipeline" / cutset / runs / "selection"
-    files = sorted(folder.glob(f"selection_cuts_*_run_{run}_*.txt"))
+    # only the cut flow of the sample the fit was made on (older fits may
+    # have left the files of a previous tag next to it)
+    tag = sample_tag(cutset, runs)
+    files = sorted(folder.glob(f"selection_cuts_*_run_{run}_{tag or '*'}.txt"))
     if not files:
         return None
     match = COMBINED_RE.search(files[0].read_text())

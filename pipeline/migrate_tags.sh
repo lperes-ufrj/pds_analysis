@@ -25,8 +25,8 @@
 # cut set's waveform cuts and intervals (its pipeline_selection_settings.txt
 # says so); the old tag's hash already pins the rest. Fits in
 # $PDS_OUTPUT/pipeline/*/*/ made on a migrated sample get the new tag in
-# sample.txt and in their copy of the cut flow; they keep their cut-set
-# folder name.
+# sample.txt, in their copy of the cut flow and in the .done markers of the
+# fit and light yield; they keep their cut-set folder name.
 
 set -euo pipefail
 
@@ -74,6 +74,17 @@ replace_with() {  # FILE TEXT REFERENCE
     printf '%s\n' "$2" > "$1"
     touch -r "$stamp" "$1"
     rm -f "$stamp"
+}
+
+# completion markers of the fit and light yield made before the sample tag
+# was part of them ("M8 templates=..." / "channels=..."): add the tag
+mark_done() {  # FILE SAMPLE_TAG FIRST_KEY
+    [[ -f $1 ]] || return 0
+    local text
+    text=$(cat "$1")
+    [[ $text == sample=* ]] && return 0
+    [[ $3 == modules ]] && text="modules=$text"
+    replace_with "$1" "sample=$2 $text" "$1"
 }
 
 rename_files() {  # DIR OLD NEW: files whose names carry OLD
@@ -158,11 +169,22 @@ for cutset in "${CUTSETS[@]}"; do
             fi
             echo "  fit $fit"
             rewrite "$info" "$old" "$sample"
+            mark_done "$fit/.done" "$sample" modules
+            mark_done "$fit/lightyield/.done" "$sample" channels
             if [[ -d $fit/selection ]]; then
                 rename_files "$fit/selection" "$old" "$sample"
                 [[ -f $snapshot ]] && replace_with "$snapshot" "$selection_settings" "$snapshot"
             fi
         done
+    done
+
+    # fits already on the new tag, with markers from before it was in them
+    for info in "$OUTPUT_ROOT"/pipeline/*/*/sample.txt; do
+        [[ -f $info ]] || continue
+        [[ $(sed -n 's/^sample tag : //p' "$info") == "$sample" ]] || continue
+        fit=$(dirname "$info")
+        mark_done "$fit/.done" "$sample" modules
+        mark_done "$fit/lightyield/.done" "$sample" channels
     done
 done
 

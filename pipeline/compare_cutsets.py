@@ -12,7 +12,7 @@ Reads:
     $PDS_OUTPUT/pipeline/<cutset>/<runs>/plots_bertolini_avg/<module>/parameters/
     $PDS_OUTPUT/pipeline/<cutset>/<runs>/selection/selection_cuts_*.txt
         (the cut flow copied at fit time; the selection folder itself is
-        shared by cut sets with the same coincidence tag)
+        shared by cut sets with the same sample tag)
 Writes (default $PDS_OUTPUT/pipeline/compare/<runs>/):
     compare_<module>_<cutsets>.png
     efficiency_<cutsets>.txt

@@ -3,15 +3,22 @@ mean waveforms, with a Birks fit and the PD-HD / previous-M8 references.
 
 Usage:
     python analysis/LY_vs_EF/fit_LY_wo_template.py [SAMPLE ...]
-        [--channels CH [CH ...]] [--out DIR] [--batch]
+        [--channels CH [CH ...]] [--runs reduced|full] [--cutset NAME]
+        [--out DIR] [--batch]
 
     SAMPLE   a pipeline cut-set name (pipeline/cutsets/NAME.env, resolved to
              its coincidence tag) or a sample label, i.e. a folder name in
              coincidence/selected_waveforms/ (pipeline tags such as
-             default_coinc_w10_a0_r_292kV_888e6582, no_coinc_2080-2081_..., or
-             older YYYYMMDD_HHMMSS rounds).
+             coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_aux500_full10000,
+             no_coinc_save_M8_r292kV_aux500_full10000, or older YYYYMMDD_HHMMSS
+             rounds).
              Several samples are combined. Default: SAMPLE_LABELS below.
     --channels  channels to average (default: CHANNELS below)
+    --runs      use only the runs of this run set (pds/runs.py); default: every
+                run with a CSV in the sample folder, which after a full pass
+                is the full scan even for a reduced cut set
+    --cutset    cut-set name to show with a sample given as a tag, so the
+                label reads "cut set [tag]" (used by pipeline/run_pipeline.sh)
     --out       output folder (default $PDS_OUTPUT/analysis/LY_vs_EF/CUTSET__TAG,
                 or .../TAG when a tag is given; several samples joined by +)
     --batch     no interactive Minuit window and no plt.show()
@@ -38,15 +45,18 @@ repo_dir = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(repo_dir))
 from pds.integrals import calc_integral_and_error,read_txt_error_file
 from pds import paths
+from pds import runs as pds_runs
 
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 SAMPLE_LABELS = ['20261027_135746']#['20260909_213507','20260909_125014']
 
 CHANNELS = [2070,2071]
 
-# set in main(): output folder, and whether to open interactive windows
+# set in main(): output folder, whether to open interactive windows, and the
+# runs to keep (None = every run found)
 OUT_DIR = None
 INTERACTIVE = True
+RUN_FILTER = None
 run_to_efield = {
     # Zero-field reference
     39510: 0.0,
@@ -288,6 +298,8 @@ def calculate_study_XA(csv_suffix, channel, y_err_runs,path_waveforms):
 
         run = int(match.group(2))
 
+        if RUN_FILTER is not None and run not in RUN_FILTER:
+            continue
         if run not in run_to_efield:
             print(f"Run {run:06d} has no electric-field mapping. Skipping.")
             continue
@@ -356,12 +368,13 @@ def calculate_study_XA(csv_suffix, channel, y_err_runs,path_waveforms):
 
 
 
-def resolve_sample(name):
+def resolve_sample(name, cutset=None):
     """(tag, display name). A folder in selected_waveforms/ is used as is
-    (display = the tag); a pipeline cut set is resolved to its sample tag
-    (display = "cut set [tag]", so plots say both the recipe and the data)."""
+    (display = the tag, or "cutset [tag]" when cutset is given); a pipeline
+    cut set is resolved to its sample tag (display = "cut set [tag]", so
+    plots say both the recipe and the data)."""
     if (paths.COINC_DIR / name).is_dir():
-        return name, name
+        return name, (f"{cutset} [{name}]" if cutset else name)
     cutset_file = repo_dir / "pipeline" / "cutsets" / f"{name}.env"
     if not cutset_file.is_file():
         raise SystemExit(f"{name!r} is neither a folder in {paths.COINC_DIR} "
@@ -379,18 +392,24 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("samples", nargs="*", default=SAMPLE_LABELS)
     parser.add_argument("--channels", nargs="+", type=int, default=CHANNELS)
+    parser.add_argument("--runs", choices=tuple(pds_runs.RUN_SETS), default=None)
+    parser.add_argument("--cutset", default=None)
     parser.add_argument("--out", default=None)
     parser.add_argument("--batch", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
-    global CHANNELS, OUT_DIR, INTERACTIVE
+    global CHANNELS, OUT_DIR, INTERACTIVE, RUN_FILTER
 
     args = parse_args()
     CHANNELS = list(args.channels)
     INTERACTIVE = not args.batch and sys.stdin.isatty()
-    samples = [resolve_sample(name) for name in args.samples]
+    if args.runs:
+        RUN_FILTER = {int(run) for run in pds_runs.run_set(args.runs).values()}
+    if args.cutset and len(args.samples) != 1:
+        raise SystemExit("--cutset labels a single sample")
+    samples = [resolve_sample(name, args.cutset) for name in args.samples]
     sample_names = [display for _, display in samples]
     # folder: cutset__tag (or the tag), joined with + for several samples
     folder_names = [display.replace(" [", "__").rstrip("]") for _, display in samples]
@@ -402,6 +421,8 @@ def main() -> None:
     for label, display in samples:
         print(f"sample {display}: coincidence/selected_waveforms/{label}/")
     print(f"channels {CHANNELS}  ->  {OUT_DIR}")
+    if args.runs:
+        print(f"run set {args.runs}: {', '.join(f'{r:06d}' for r in sorted(RUN_FILTER))}")
 
     mean_rel_ly = []
     mean_rel_ly_err_up = []
@@ -635,6 +656,7 @@ def main() -> None:
         fh.write("efield_kVcm rel_ly err_low err_up\n")
         fh.write(f"# samples : {', '.join(d for _, d in samples)}  (cut set [sample tag])\n")
         fh.write(f"# channels: {CHANNELS}\n")
+        fh.write(f"# run set : {args.runs or 'every run in the sample folder'}\n")
         fh.write(f"# Birks   : B_1 = {m_birks.values['B_1']:.5g} +- {m_birks.errors['B_1']:.3g}, "
                  f"k = {m_birks.values['k']:.5g} +- {m_birks.errors['k']:.3g}, "
                  f"chi2/ndof = {m_birks.fval:.4g}/{ndof_birks}\n")

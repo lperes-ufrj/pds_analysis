@@ -149,13 +149,13 @@ python3 fit/waveform_fits/fitting_bertolini_avg.py   # template-convolved fit pe
 ### Steps 2-4 in one go, per cut set
 
 [`pipeline/run_pipeline.sh`](pipeline/README.md) chains coincidence, waveform
-selection and the template-convolved fit for a cut set defined in
+selection, the template-convolved fit and the light yield vs field for a cut set defined in
 `pipeline/cutsets/*.env`, on 7 fields (`--runs reduced`, default) or on the
 full scan (`--runs full`). `pipeline/compare_cutsets.py` overlays the results.
 
 ```bash
-pipeline/run_pipeline.sh baseline
-python3 pipeline/compare_cutsets.py baseline tight_aux
+pipeline/run_pipeline.sh workflow_fast
+python3 pipeline/compare_cutsets.py workflow_fast MY_VARIATION
 ```
 
 ### 5. Physics analyses

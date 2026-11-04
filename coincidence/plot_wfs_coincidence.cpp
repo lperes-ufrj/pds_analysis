@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -40,6 +41,7 @@ struct Options {
     fs::path config;
     fs::path output_dir;
     fs::path csv_file;
+    std::string tag;
     double max_auxiliary_amplitude = DEFAULT_MAX_AUXILIARY_AMPLITUDE;
     double max_full_range_amplitude = DEFAULT_MAX_FULL_RANGE_AMPLITUDE;
 };
@@ -147,6 +149,9 @@ void printUsage(const char *program)
         << "  --config FILE                 Waveform interval INI file\n"
         << "  --output-dir DIR             Output directory\n"
         << "  --csv FILE                   run_coincidence output CSV (required)\n"
+        << "  --tag TAG                    Label suffix of the outputs (default: the\n"
+        << "                               CSV's TIMESTAMP), as in\n"
+        << "                               selection_cuts_coincidence_scan_run_RUN_TAG.txt\n"
         << "  --max-auxiliary-amplitude N  Noise/post-signal limit in ADC (default: 500)\n"
         << "  --max-full-range-amplitude N Full-waveform amplitude limit in ADC (default: 10000)\n"
         << "  -h, --help                    Show this help\n";
@@ -165,13 +170,14 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
             std::exit(0);
         }
         if (argument == "--config" || argument == "--output-dir"
-            || argument == "--csv"
+            || argument == "--csv" || argument == "--tag"
             || argument == "--max-auxiliary-amplitude"
             || argument == "--max-full-range-amplitude") {
             if (++index >= argc) throw std::runtime_error("Missing value for " + argument);
             if (argument == "--config") options.config = argv[index];
             else if (argument == "--output-dir") options.output_dir = argv[index];
             else if (argument == "--csv") options.csv_file = argv[index];
+            else if (argument == "--tag") options.tag = argv[index];
             else if (argument == "--max-auxiliary-amplitude") {
                 options.max_auxiliary_amplitude = std::stod(argv[index]);
             } else options.max_full_range_amplitude = std::stod(argv[index]);
@@ -188,6 +194,11 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
 
     if (options.csv_file.empty()) {
         throw std::runtime_error("Missing required option --csv");
+    }
+    if (!std::all_of(options.tag.begin(), options.tag.end(), [](unsigned char c) {
+            return std::isalnum(c) || c == '-' || c == '_';
+        })) {
+        throw std::runtime_error("--tag may contain only letters, digits, '-' and '_'");
     }
     if (options.input_list.empty()) {
         throw std::runtime_error("Missing input list");
@@ -699,7 +710,11 @@ void processInputList(
         *chain, located, analyzer, options.max_auxiliary_amplitude,
         options.max_full_range_amplitude
     );
-    const std::string label = csv_file.stem().string();
+    // the pipeline names the selection by its sample tag, which extends the
+    // coincidence tag of the CSV with the waveform cuts
+    const std::string label = options.tag.empty()
+        ? csv_file.stem().string()
+        : "coincidence_scan_run_" + run + "_" + options.tag;
     const fs::path cut_summary = options.output_dir
         / ("selection_cuts_" + label + ".txt");
 

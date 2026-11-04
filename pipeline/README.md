@@ -1,22 +1,24 @@
 # pipeline
 
-Runs coincidence → waveform selection → mean-waveform fit for one **cut set**,
+Runs coincidence → waveform selection → mean-waveform fit → light yield vs
+field for one **cut set**,
 on a reduced set of 7 fields (fast, for validating cuts) or on the full scan.
 `TRIGGER=no_coinc` skips the coincidence (see below).
 
-Start from the two editable templates, which list every option with its
-alternatives. They are identical except for `RUN_SET`:
+There are two cut sets, both editable templates that list every option
+with its alternatives. They are identical except for `RUN_SET`:
 
 ```bash
-pipeline/run_pipeline.sh baseline_fast             # 7 fields: 0 10 20 40 100 205 292 kV
-pipeline/run_pipeline.sh baseline_all              # 22 fields, once the cuts are settled
-python3 pipeline/compare_cutsets.py baseline_fast  # efficiency and fit summary
-python3 pipeline/compare_cutsets.py --runs full baseline_all
+pipeline/run_pipeline.sh workflow_fast             # 7 fields: 0 10 20 40 100 205 292 kV
+pipeline/run_pipeline.sh workflow_all              # 22 fields, once the cuts are settled
+python3 pipeline/compare_cutsets.py workflow_fast  # efficiency and fit summary
+python3 pipeline/compare_cutsets.py --runs full workflow_all
 ```
 
-With the same settings both share one sample, so `baseline_all` only
-processes the 15 runs `baseline_fast` did not. `--runs reduced|full`
-overrides the file's `RUN_SET`.
+With the same settings both share one sample, so `workflow_all` only
+processes the 15 runs `workflow_fast` did not. `--runs reduced|full`
+overrides the file's `RUN_SET`. To try other choices, copy one of them to a
+new name (the name labels the fits and plots) and edit it.
 
 The run sets live in [`pds/runs.py`](../pds/runs.py) (`REDUCED_FIELDS`,
 `FIT_SCAN`). The reduced set has 4 fields at ≤ 40 kV, where most field
@@ -27,27 +29,50 @@ E = 0 peak.
 
 | Name | What it is | Example | Names |
 |---|---|---|---|
-| cut set | the recipe: file `cutsets/NAME.env` | `baseline_m8`, `single_m8` | fit folder `$PDS_OUTPUT/pipeline/NAME/RUNSET/`, legends of `compare_cutsets.py` |
-| sample tag | the data the recipe selects | `default_coinc_w10_a0_r_292kV_888e6582`, `no_coinc_2080-2081_r_292kV_6eea14cf` | `coincidence/saved_coincidences/TAG/`, `coincidence/selected_waveforms/TAG/` |
+| cut set | the recipe: file `cutsets/NAME.env` | `workflow_fast` | fit folder `$PDS_OUTPUT/pipeline/NAME/RUNSET/`, legends of `compare_cutsets.py` |
+| sample tag | the data the recipe selects, every choice spelled out | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_aux500_full10000` | `coincidence/selected_waveforms/TAG/` |
+| coincidence tag | the sample tag without the waveform cuts | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV` | `coincidence/saved_coincidences/TAG/` |
 
-Reading a tag: first the `TRIGGER` value; then, for a coincidence, `w10` the
-window in ticks and `a0` the minimum amplitude in ADC, or for `no_coinc` the
-channels; `r_292kV` the rate-threshold folder (`rnorate`: none); and a hash
-of all the settings that define the sample. Every run prints both names with the
-tag spelled out, and writes them to `sample.txt` in the selection and fit
-folders. Cut sets that differ only in waveform cuts, `MODULES` or
-`TEMPLATES` share a tag and its selection folder, which is why the fits are
-named by cut set. The light-yield script and `compare_cutsets.py` label each
-sample `cut set [tag]`.
+`pipeline/run_pipeline.sh NAME --print-tag` prints the sample tag
+(`--print coinc-tag` the coincidence tag). Every run prints both names with
+the tag in words, and writes them to `sample.txt` in the selection and fit
+folders. The light-yield script and `compare_cutsets.py` label each sample
+`cut set [tag]`.
+
+Reading a tag, part by part:
+
+| Part | Cut-set variable | Example | Meaning |
+|---|---|---|---|
+| `coinc_` … `_vs_` … | `TRIGGER` (or `LEFT/RIGHT_CHANNELS`) | `coinc_M3-M4_vs_M5-M6` | coincidence: the trigger channels of one side vs the other (`default_coinc`, `inverse_coinc` and `custom_coinc` are written by their channels) |
+| `no_coinc` | `TRIGGER=no_coinc` | `no_coinc` | no coincidence |
+| `save_` | `TRIGGER` (or `SAVE_CHANNELS`), `CHANNELS` for `no_coinc` | `save_M7-M8`, `save_M1-2021`, `save_membrane` | the channels saved and analysed |
+| `w` | `WINDOW_TICKS` | `w20` | coincidence window [ticks], only when not the standard 10 |
+| `a` | `MIN_AMPLITUDE_ADC` | `a0` | minimum trigger amplitude [ADC] |
+| `n` | `MAX_WAVEFORMS` | `n5000` | `no_coinc`, only when not 0 (all) |
+| `r` | `RATE_THRESHOLDS` | `r292kV`, `rnone` | rate-threshold folder (`RateAnalysis_data_` dropped), or no rate cut |
+| `iv-` | `INTERVALS` | `iv-xe` | only for a file other than `coincidence/waveform_intervals.ini` (`waveform_intervals_` dropped) |
+| `aux` | `MAX_AUX_ADC` | `aux500` | noise and post-signal limit [ADC] |
+| `full` | `MAX_FULL_RANGE_ADC` | `full10000` | full-waveform limit [ADC] |
+| `peak` | `REQUIRE_PEAK` | `peak` | `no_coinc`, only when 1 |
+
+Channels: a module with both arrays by name (2080 2081 → `M8`), other
+channels by number, joined by `-`; `all`, `cathode` or `membrane` when the
+list is exactly that set of the `INTERVALS` file. Decimals are written with
+`p` (`aux250p5`). Not in the tag, on purpose:
+`RUN_SET` (the fast and full passes share a sample), `MODULES`, `TEMPLATES`
+and `LY_CHANNELS` (they only change the fit and light yield, which are kept
+per cut set), and `CHANNELS_PER_PASS` (memory only). The tag names the
+threshold and intervals files but cannot show their contents: each folder
+keeps a settings snapshot with a checksum of them, and a folder made from
+other contents is refused until `--force coincidence` / `--force selection`.
 
 ## Cut sets
 
-One file per cut set in `cutsets/NAME.env`. `NAME` names the fit outputs; the
-coincidence and selection folders are named by the coincidence tag
-(`pipeline/run_pipeline.sh NAME --print-tag`), so one label identifies a
-sample everywhere, as with the older `YYYYMMDD_HHMMSS` rounds.
-Copy [`cutsets/baseline_fast.env`](cutsets/baseline_fast.env) or
-[`cutsets/baseline_all.env`](cutsets/baseline_all.env) and change it.
+One file per cut set in `cutsets/NAME.env`. `NAME` names the fit outputs;
+the coincidence and selection folders are named by the tags, so two cut sets
+with the same choices share them. Copy
+[`cutsets/workflow_fast.env`](cutsets/workflow_fast.env) or
+[`cutsets/workflow_all.env`](cutsets/workflow_all.env) and change it.
 
 | Variable | Stage | Meaning |
 |---|---|---|
@@ -62,6 +87,7 @@ Copy [`cutsets/baseline_fast.env`](cutsets/baseline_fast.env) or
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; their channels must be saved (`default_coinc` → M7 M8, `inverse_coinc` → M5 M6) |
 | `TEMPLATES` | fit | detector response: `large_pulse` (default) or `francesca`, see below |
+| `LY_CHANNELS` | lightyield | channels averaged into the S/S0 curve; empty = the channels of `MODULES`, or every selected channel when `MODULES` is empty |
 
 `TRIGGER` values (channels: Mk → 20k0 20k1, Ck → 10k0 10k1):
 
@@ -73,10 +99,11 @@ Copy [`cutsets/baseline_fast.env`](cutsets/baseline_fast.env) or
 | `no_coinc` | none | every waveform of `CHANNELS` |
 
 A `custom_coinc` with the channels of one of the two standard layouts is
-run as that layout, so it shares its folders. These names replace `m8`,
-`low` and `MODE=single`; [`migrate_tags.sh`](migrate_tags.sh) renames old
-output folders (`c_m8_` → `default_coinc_`, `c_low_` → `inverse_coinc_`,
-`s_` → `no_coinc_`). The hashes are unchanged, so nothing reruns.
+run as that layout, so it shares its folders.
+
+Folders from the previous, hashed tags (`default_coinc_w10_a0_r_292kV_888e6582`)
+are renamed by [`migrate_tags.sh`](migrate_tags.sh) without rerunning
+anything; see its `--help`.
 
 Peak-finder thresholds (used by the "peak outside the signal window" cuts)
 go in the INI file; without the section the defaults are kept:
@@ -89,19 +116,17 @@ min_height_sigma = 10    ;                    min_height_sigma * noise RMS)
 
 ## Without coincidence (`TRIGGER=no_coinc`)
 
-[`cutsets/single_m8.env`](cutsets/single_m8.env) selects every waveform of
-`CHANNELS` with [`bin/only_selection`](../coincidence/only_selection.cpp),
-for any channel in the `INTERVALS` file, cathode (10xx) or membrane (20xx);
-[`single_cathode.env`](cutsets/single_cathode.env) and
-[`single_membrane.env`](cutsets/single_membrane.env) take all of each. It
-selects them applying the same quality cuts as `plot_wfs_coincidence`: the two programs
-share the cut code in `coincidence_lib.cpp`. Compare it with `baseline_m8` to
-see what the coincidence requirement changes:
+`TRIGGER=no_coinc` selects every waveform of `CHANNELS` with
+[`bin/only_selection`](../coincidence/only_selection.cpp), for any channel in
+the `INTERVALS` file, cathode (10xx) or membrane (20xx). It applies the same
+quality cuts as `plot_wfs_coincidence`: the two programs share the cut code
+in `coincidence_lib.cpp`. To see what the coincidence requirement changes,
+copy `workflow_fast.env` to, say, `nocoinc_fast.env`, set `TRIGGER=no_coinc`
+and `CHANNELS="2080 2081"`, and compare:
 
 ```bash
-pipeline/run_pipeline.sh single_m8
-python3 pipeline/compare_cutsets.py baseline_m8 single_m8
-python analysis/LY_vs_EF/fit_LY_wo_template.py single_m8 --channels 2080 2081 --batch
+pipeline/run_pipeline.sh nocoinc_fast       # sample no_coinc_save_M8_r292kV_aux500_full10000
+python3 pipeline/compare_cutsets.py workflow_fast nocoinc_fast
 ```
 
 | Variable | Meaning |
@@ -114,9 +139,8 @@ python analysis/LY_vs_EF/fit_LY_wo_template.py single_m8 --channels 2080 2081 --
 | `MAX_WAVEFORMS` | per channel and run, after the rate cut, in file order; `0` = all (default) |
 | `CHANNELS_PER_PASS` | channels held in memory at once, one pass over the input per group (default 4; `0` = all) |
 
-The coincidence stage is skipped. The tag is `no_coinc_<channels>[_n<MAX_WAVEFORMS>]_r<rate>_<hash>`,
-where `<channels>` is the keyword, the channels joined by `-` (up to 4), or `<n>ch`,
-and the files are labelled `only_selection_scan_run_RUN_TAG`, so the fit,
+The coincidence stage is skipped. The files are labelled
+`only_selection_scan_run_RUN_TAG`, so the fit,
 `compare_cutsets.py`, the light-yield script and `pds/integrals.py` read them
 like the coincidence ones. The efficiency in `compare_cutsets.py` is relative
 to the waveforms entering the quality cuts, after the rate cut.
@@ -140,19 +164,20 @@ Caveats:
 
 ## Caching
 
-- **Coincidence** output goes to `coincidence/saved_coincidences/c_<trigger>_w.._a.._r.._<hash>/`,
-  and the selection to `coincidence/selected_waveforms/` under the same tag.
-  The tag is derived from the coincidence settings, so cut sets that differ
-  only in waveform cuts share one coincidence pass **and one selection
-  folder**. The folder holds one selection at a time: switching to another
-  such cut set needs `--force selection`, which replaces the files there.
-  Fits are kept per cut set, each with a copy of the cut flow it used, and
-  fitting is refused while the folder holds another cut set's selection.
+- The coincidence goes to `coincidence/saved_coincidences/COINC_TAG/` and
+  the selection to `coincidence/selected_waveforms/SAMPLE_TAG/`. Cut sets
+  that differ only in waveform cuts share the coincidence and get their own
+  selection folders, so changing a cut never overwrites another sample.
 - Each stage marks finished runs, so rerunning skips them, and `--runs full`
   after a reduced pass only processes the 15 new runs.
-- Editing a cut set's waveform cuts after its selection ran is refused until
-  you pass `--force selection` (the fit follows automatically).
-- `--force coincidence,selection,fit` redoes any stage; `--stages` runs a subset;
+- Editing a cut set's choices gives a new tag, so a new folder; the old one
+  stays. Only edits to the contents of the threshold or intervals file, which
+  the tag cannot show, are refused until `--force coincidence` /
+  `--force selection` (the fit and light yield follow automatically).
+- The fit and light yield rerun by themselves when the selection changed or
+  gained runs, or when `MODULES`/`TEMPLATES` (fit) or `LY_CHANNELS` (light
+  yield) changed.
+- `--force coincidence,selection,fit,lightyield` redoes any stage; `--stages` runs a subset;
   `--dry-run` prints the commands.
 
 ## Outputs
@@ -160,6 +185,7 @@ Caveats:
 | Path | Contents |
 |---|---|
 | `coincidence/selected_waveforms/TAG/selection_cuts_*.txt` | cut flow per run |
+| `coincidence/selected_waveforms/TAG/pipeline_selection_settings.txt`, `sample.txt` | what the folder was selected from; the tag in words |
 | `coincidence/selected_waveforms/TAG/mean_median_waveforms_*.png` | mean, median, 16–84 % band |
 | `coincidence/selected_waveforms/TAG/channel_<ch>_*.csv` | mean waveform per channel and run |
 | `coincidence/selected_waveforms/TAG/fprompt_*.csv` | prompt fraction per waveform |
@@ -167,19 +193,31 @@ Caveats:
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/plots_bertolini_avg/MODULE/` | fit plots and `parameters/*.txt` |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/selection/` | cut flow the fit was made on |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/sample.txt` | cut set, sample tag spelled out, templates |
+| `$PDS_OUTPUT/pipeline/NAME/RUNSET/lightyield/fit_LY_wo_template_chs_*.{png,txt}` | S/S0 vs field, Birks fit, and the numbers behind the figure |
 | `$PDS_OUTPUT/pipeline/compare/RUNSET/` | `compare_cutsets.py` figures and efficiency table |
 
 The fit runs in batch mode (no interactive Minuit windows). Set `PYTHON` to an
 interpreter with `iminuit` and `dunestyle`, e.g.
-`PYTHON=.venv/bin/python pipeline/run_pipeline.sh baseline`.
+`PYTHON=.venv/bin/python pipeline/run_pipeline.sh workflow_fast`.
 
 ## Light yield vs field
 
+The `lightyield` stage runs
 [`analysis/LY_vs_EF/fit_LY_wo_template.py`](../analysis/LY_vs_EF/fit_LY_wo_template.py)
-takes cut-set names or tags directly:
+on the selection: the integral of each run's mean waveform, normalized to
+0 kV (run 039510, so every channel in `LY_CHANNELS` needs it), averaged over
+the channels, with a Birks fit and the PD-HD and previous-M8 points. Only the
+runs of the run set are used, although the selection folder may hold more.
 
 ```bash
-python analysis/LY_vs_EF/fit_LY_wo_template.py baseline_m8 --channels 2080 2081 --batch
+pipeline/run_pipeline.sh workflow_fast --stages lightyield   # selection already done
+pipeline/run_pipeline.sh workflow_fast --stages selection,fit,lightyield
+```
+
+Run by hand, the script takes cut-set names or tags directly:
+
+```bash
+python analysis/LY_vs_EF/fit_LY_wo_template.py workflow_fast --channels 2080 2081 --batch
 ```
 
 Figure and table go to `$PDS_OUTPUT/analysis/LY_vs_EF/CUTSET__TAG/` (or
@@ -199,7 +237,7 @@ map: Mk → 20k0 20k1, Ck → 10k0 10k1.
 
 The fit window and t0 limits were tuned on M5, M6 and M8 with the francesca
 templates; the other modules use a 3 µs window and t0 in [0.9, 1.4] µs.
-On the reduced baseline_m8 sample, M8 gives τ_eff(0) = 1445 ns with
+On the reduced default_coinc sample (`workflow_fast`), M8 gives τ_eff(0) = 1445 ns with
 large_pulse against 1386 ns with francesca. M7 does not fit with either set
 (τ_s at its 0.7 µs limit, χ²/ndf in the thousands), so the M7 mean waveform
 itself needs a look. A module whose fit fails does not stop the others, but

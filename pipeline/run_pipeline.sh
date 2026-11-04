@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Coincidence -> waveform selection -> mean-waveform fit, for one cut set.
+# Coincidence -> waveform selection -> mean-waveform fit -> light yield vs
+# field, for one cut set.
 # TRIGGER in the cut set: default_coinc, inverse_coinc, custom_coinc, or
 # no_coinc (no coincidence stage: bin/only_selection takes every waveform of
 # CHANNELS and applies the same quality cuts).
@@ -10,28 +11,45 @@
 #   CUTSET               pipeline/cutsets/NAME.env, or a path to a .env file
 #   --runs reduced|full  run set from pds/runs.py; overrides RUN_SET of the cut
 #                        set (default: reduced, 7 fields; full: 22 fields)
-#   --stages LIST        comma list of coincidence,selection,fit (default: all)
+#   --stages LIST        comma list of coincidence,selection,fit,lightyield
+#                        (default: all)
 #   --force LIST         redo these stages even when their outputs exist
 #   --dry-run            print the commands without running them
-#   --print-tag          print the cut set's coincidence tag and exit
+#   --print-tag          print the cut set's sample tag and exit
+#   --print WHAT         print and exit: tag (= --print-tag), coinc-tag,
+#                        legacy-tag (the old hashed tag, for migrate_tags.sh),
+#                        selection-settings, coinc-settings
 #
 # Environment:
-#   PYTHON      interpreter for the fit (default: python3)
+#   PYTHON      interpreter for the fit and light yield (default: python3)
 #   PDS_OUTPUT  output root; fits go to $PDS_OUTPUT/pipeline/CUTSET/RUNSET/
+#
+# Tags: every sample choice of the cut set spelled out, so the folder name
+# says how the sample was made (no hash):
+#   coincidence tag  coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV
+#                    trigger channels (one side vs the other), saved
+#                    channels, min amplitude, rate cut
+#   sample tag       coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_aux500_full10000
+#                    + the waveform cuts
+#                    no_coinc_save_M8_r292kV_aux500_full10000
+# Optional parts appear only when used: _w<WINDOW_TICKS> (a window other
+# than the standard 10 ticks), _n<MAX_WAVEFORMS>, _iv-<INI name> (an
+# INTERVALS file other than coincidence/waveform_intervals.ini), _peak
+# (REQUIRE_PEAK=1). Fit-only choices (MODULES, TEMPLATES, LY_CHANNELS) and
+# RUN_SET are not in it: they do not change the sample, and the fit folder
+# is named by the cut set and run set.
 #
 # Outputs:
 #   coincidence/saved_coincidences/COINC_TAG/   run_coincidence, shared by every
 #                                               cut set with the same coincidence
-#                                               settings (COINC_TAG is derived
-#                                               from them, so a cached pass is
-#                                               reused automatically)
-#   coincidence/selected_waveforms/COINC_TAG/   cut flow, mean waveforms, fprompt
-#                                               (same name as the coincidence
-#                                               folder: one tag labels the sample;
-#                                               e.g. default_coinc_w10_a0_r_292kV_<hash>,
-#                                               no_coinc_<channels>_r_292kV_<hash>)
+#                                               choices (no_coinc: none)
+#   coincidence/selected_waveforms/SAMPLE_TAG/  cut flow, mean waveforms, fprompt
 #   $PDS_OUTPUT/pipeline/CUTSET/RUNSET/         fit plots, parameter tables and a
 #                                               copy of the cut flow it was fitted on
+#   $PDS_OUTPUT/pipeline/CUTSET/RUNSET/lightyield/
+#                                               S/S0 vs field with the Birks fit
+#                                               (analysis/LY_vs_EF/fit_LY_wo_template.py)
+#                                               averaged over LY_CHANNELS
 #
 # Each stage is cached per run with a .done_RUN marker, so a reduced pass
 # followed by a full pass only processes the runs that are new.
@@ -42,7 +60,8 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 PYTHON=${PYTHON:-python3}
 
-usage() { sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+# the comment block at the top of this file, up to the first non-comment line
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "Error: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- arguments
@@ -51,17 +70,18 @@ case $1 in -h|--help) usage; exit 0 ;; esac
 
 CUTSET_ARG=$1; shift
 RUNS_OPTION=
-STAGES=coincidence,selection,fit
+STAGES=coincidence,selection,fit,lightyield
 FORCE=
 DRY_RUN=0
-PRINT_TAG=0
+PRINT=
 while (($#)); do
     case $1 in
         --runs)    RUNS_OPTION=${2:?--runs needs a value}; shift 2 ;;
         --stages)  STAGES=${2:?--stages needs a value}; shift 2 ;;
         --force)   FORCE=${2:?--force needs a value}; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
-        --print-tag) PRINT_TAG=1; shift ;;
+        --print-tag) PRINT=tag; shift ;;
+        --print)   PRINT=${2:?--print needs a value}; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option $1" ;;
     esac
@@ -80,13 +100,15 @@ CUTSET=$(basename -- "$CUTSET_FILE" .env)
 
 has() { [[ ,$1, == *,$2,* ]]; }
 for stage in ${STAGES//,/ } ${FORCE//,/ }; do
-    case $stage in coincidence|selection|fit) ;; *) die "unknown stage $stage" ;; esac
+    case $stage in coincidence|selection|fit|lightyield) ;;
+        *) die "unknown stage $stage (stages: coincidence, selection, fit, lightyield)" ;; esac
 done
 
 # ------------------------------------------------------------------ cut set
 MODE= TRIGGER= WINDOW_TICKS= MIN_AMPLITUDE_ADC= RATE_THRESHOLDS= INTERVALS=
 MAX_AUX_ADC= MAX_FULL_RANGE_ADC= MODULES= CHANNELS= REQUIRE_PEAK= MAX_WAVEFORMS=
 CHANNELS_PER_PASS= TEMPLATES= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS= RUN_SET=
+LY_CHANNELS=
 # shellcheck source=/dev/null
 source "$CUTSET_FILE"
 [[ -z $MODE ]] || die "MODE is no longer used: write TRIGGER=no_coinc instead of MODE=single
@@ -172,91 +194,167 @@ modules_of() {
 
 case $TRIGGER in
     default_coinc)
-        LEFT=$DEFAULT_LEFT; RIGHT=$DEFAULT_RIGHT; SAVE=$DEFAULT_SAVE; HASH_KEY=m8 ;;
+        LEFT=$DEFAULT_LEFT; RIGHT=$DEFAULT_RIGHT; SAVE=$DEFAULT_SAVE ;;
     inverse_coinc)
-        LEFT=$INVERSE_LEFT; RIGHT=$INVERSE_RIGHT; SAVE=$INVERSE_SAVE; HASH_KEY=low ;;
+        LEFT=$INVERSE_LEFT; RIGHT=$INVERSE_RIGHT; SAVE=$INVERSE_SAVE ;;
     custom_coinc)
         LEFT=$(expand_channels LEFT_CHANNELS "$LEFT_CHANNELS")
         RIGHT=$(expand_channels RIGHT_CHANNELS "$RIGHT_CHANNELS")
         SAVE=$(expand_channels SAVE_CHANNELS "$SAVE_CHANNELS")
-        HASH_KEY=custom
         # the two standard layouts keep their own names (and folders)
         if [[ "$LEFT|$RIGHT|$SAVE" == "$DEFAULT_LEFT|$DEFAULT_RIGHT|$DEFAULT_SAVE" ]]; then
             echo "[note] these custom_coinc channels are the default_coinc layout; using it" >&2
-            TRIGGER=default_coinc; HASH_KEY=m8
+            TRIGGER=default_coinc
         elif [[ "$LEFT|$RIGHT|$SAVE" == "$INVERSE_LEFT|$INVERSE_RIGHT|$INVERSE_SAVE" ]]; then
             echo "[note] these custom_coinc channels are the inverse_coinc layout; using it" >&2
-            TRIGGER=inverse_coinc; HASH_KEY=low
+            TRIGGER=inverse_coinc
         fi ;;
     no_coinc)
-        CHANNEL_LABEL=
-        [[ $(echo $CHANNELS) =~ ^(all|cathode|membrane)$ ]] && CHANNEL_LABEL=$CHANNELS
-        CHANNELS=$(expand_channels CHANNELS "$CHANNELS")
-        n_channels=$(wc -w <<< "$CHANNELS")
-        if [[ -z $CHANNEL_LABEL ]]; then
-            ((n_channels <= 4)) && CHANNEL_LABEL=${CHANNELS// /-} || CHANNEL_LABEL=${n_channels}ch
-        fi ;;
+        CHANNEL_KEYWORD=
+        [[ $(echo $CHANNELS) =~ ^(all|cathode|membrane)$ ]] && CHANNEL_KEYWORD=$CHANNELS
+        CHANNELS=$(expand_channels CHANNELS "$CHANNELS") ;;
 esac
 
-# Sample tag: TRIGGER + readable settings + hash of everything that defines
-# the sample. The hash keys m8/low/single are the pre-rename names, kept so
-# that renamed folders (pipeline/migrate_tags.sh) keep their hashes.
+# ------------------------------------------------------------- sample tags
+# Every choice that defines the sample, spelled out (see the header):
+#   COINC_TAG   coincidence folder: trigger channels (one side vs the other),
+#               saved channels, min amplitude, rate cut, intervals file, and
+#               the window when it is not the standard 10 ticks
+#   SAMPLE_TAG  selection folder: COINC_TAG (no_coinc: saved channels,
+#               waveform limit, rate cut, intervals file) + waveform cuts
+# Channels, not the TRIGGER name, are written, so default_coinc,
+# inverse_coinc and custom_coinc tags all read the same way.
+# The contents of the rate-threshold and intervals files are not in the
+# name; the settings snapshots below refuse to reuse a folder made from
+# other contents.
+
+# 2080 2081 -> M8: a module with both arrays by name, other channels by
+# number, joined by '-' (2010 2011 2021 -> M1-2021)
+short_channels() {
+    local ch m base out=
+    for ch in $1; do
+        m=${ch:0:1}; m=${m/1/C}; m=${m/2/M}; m+=${ch:2:1}
+        base=${ch:0:3}
+        if [[ " $1 " == *" ${base}0 "* && " $1 " == *" ${base}1 "* ]]; then
+            [[ -$out- == *-$m-* ]] || out+=${out:+-}$m
+        else
+            out+=${out:+-}$ch
+        fi
+    done
+    echo "$out"
+}
+# a number for a tag: 2.5 -> 2p5
+tag_number() { echo "${1//./p}"; }
+# no_coinc channels: all, cathode or membrane when the list is exactly that
+# set of the INTERVALS file, else the short form
+channels_label() {
+    local keyword
+    for keyword in all cathode membrane; do
+        [[ $(expand_channels x "$keyword" 2>/dev/null) == "$1" ]] && { echo "$keyword"; return; }
+    done
+    short_channels "$1"
+}
+STANDARD_WINDOW_TICKS=10
+
+RATE_TEXT=none RATE_LABEL=none RATE_SHA1=-
+if [[ -n $RATE_THRESHOLDS ]]; then
+    RATE_TEXT=$(basename "$RATE_THRESHOLDS")
+    RATE_LABEL=${RATE_TEXT#RateAnalysis_data_}
+    RATE_SHA1=$(cat "$RATE_THRESHOLDS"/equalized_run_*_thresholds.txt | sha1sum | cut -c1-12)
+fi
+INTERVALS_LABEL=
+if [[ $INTERVALS != "$REPO_DIR/coincidence/waveform_intervals.ini" ]]; then
+    INTERVALS_LABEL=$(basename "$INTERVALS" .ini)
+    INTERVALS_LABEL=_iv-${INTERVALS_LABEL#waveform_intervals_}
+fi
 # The [peak_finder] INI section is left out: only the selection stage uses it.
 intervals_for_coincidence() {
     awk '/^[[:space:]]*\[/ { skip = ($0 ~ /\[peak_finder\]/) } !skip' "$INTERVALS"
 }
-RATE_LABEL=$(basename "${RATE_THRESHOLDS:-norate}")
-RATE_LABEL=${RATE_LABEL#RateAnalysis_data}
+
+CUT_LABEL=_aux$(tag_number "$MAX_AUX_ADC")_full$(tag_number "$MAX_FULL_RANGE_ADC")
 if [[ $MODE == coincidence ]]; then
-    COINC_HASH=$( {
-        echo "$HASH_KEY $LEFT | $RIGHT | $SAVE | $WINDOW_TICKS | $MIN_AMPLITUDE_ADC"
-        echo "rate=${RATE_THRESHOLDS:+$(basename "$RATE_THRESHOLDS")}"
-        [[ -n $RATE_THRESHOLDS ]] && cat "$RATE_THRESHOLDS"/equalized_run_*_thresholds.txt
-        intervals_for_coincidence
-    } | sha1sum | cut -c1-8 )
-    COINC_TAG=${TRIGGER}_w${WINDOW_TICKS}_a${MIN_AMPLITUDE_ADC}_r${RATE_LABEL:-default}_${COINC_HASH}
+    WINDOW_LABEL=
+    [[ $WINDOW_TICKS == "$STANDARD_WINDOW_TICKS" ]] || WINDOW_LABEL=_w$(tag_number "$WINDOW_TICKS")
+    COINC_TAG=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT")_save_$(short_channels "$SAVE")
+    COINC_TAG+=${WINDOW_LABEL}_a$(tag_number "$MIN_AMPLITUDE_ADC")_r${RATE_LABEL}${INTERVALS_LABEL}
+    SAMPLE_TAG=$COINC_TAG$CUT_LABEL
 else
-    # what defines the population before the quality cuts (channels, rate
-    # cut, waveform limit); the intervals and quality cuts are guarded by the
-    # selection settings snapshot instead
-    COINC_HASH=$( {
-        echo "single $CHANNELS | max_waveforms=$MAX_WAVEFORMS"
-        echo "rate=${RATE_THRESHOLDS:+$(basename "$RATE_THRESHOLDS")}"
-        [[ -n $RATE_THRESHOLDS ]] && cat "$RATE_THRESHOLDS"/equalized_run_*_thresholds.txt
-    } | sha1sum | cut -c1-8 )
+    COINC_TAG=
     LIMIT_LABEL=
     ((MAX_WAVEFORMS)) && LIMIT_LABEL=_n$MAX_WAVEFORMS
-    COINC_TAG=no_coinc_${CHANNEL_LABEL}${LIMIT_LABEL}_r${RATE_LABEL:-default}_${COINC_HASH}
+    ((REQUIRE_PEAK)) && CUT_LABEL+=_peak
+    SAMPLE_TAG=no_coinc_save_$(channels_label "$CHANNELS")${LIMIT_LABEL}_r${RATE_LABEL}${INTERVALS_LABEL}$CUT_LABEL
 fi
 COINC_TAG=${COINC_TAG//[^A-Za-z0-9_-]/-}
+SAMPLE_TAG=${SAMPLE_TAG//[^A-Za-z0-9_-]/-}
 
-# The tag spelled out. Two names run through every output:
-#   cut set (CUTSET)    the recipe: this .env file's name; names the fit folder
-#   sample tag (COINC_TAG)  the data the recipe selects: names the coincidence
-#                       and selection folders, shared by cut sets that select
-#                       the same sample (they differ only in later choices:
-#                       waveform cuts, modules, templates)
+# The tag of the previous scheme (readable prefix + hash), only to find and
+# rename old folders: pipeline/migrate_tags.sh. The hash keys m8/low/single
+# are the names of an even older scheme.
+legacy_tag() {
+    local key hash rate=$(basename "${RATE_THRESHOLDS:-norate}") label n tag
+    rate=${rate#RateAnalysis_data}
+    if [[ $MODE == coincidence ]]; then
+        case $TRIGGER in default_coinc) key=m8 ;; inverse_coinc) key=low ;; *) key=custom ;; esac
+        hash=$( {
+            echo "$key $LEFT | $RIGHT | $SAVE | $WINDOW_TICKS | $MIN_AMPLITUDE_ADC"
+            echo "rate=${RATE_THRESHOLDS:+$(basename "$RATE_THRESHOLDS")}"
+            [[ -n $RATE_THRESHOLDS ]] && cat "$RATE_THRESHOLDS"/equalized_run_*_thresholds.txt
+            intervals_for_coincidence
+        } | sha1sum | cut -c1-8 )
+        tag=${TRIGGER}_w${WINDOW_TICKS}_a${MIN_AMPLITUDE_ADC}_r${rate:-default}_$hash
+    else
+        hash=$( {
+            echo "single $CHANNELS | max_waveforms=$MAX_WAVEFORMS"
+            echo "rate=${RATE_THRESHOLDS:+$(basename "$RATE_THRESHOLDS")}"
+            [[ -n $RATE_THRESHOLDS ]] && cat "$RATE_THRESHOLDS"/equalized_run_*_thresholds.txt
+        } | sha1sum | cut -c1-8 )
+        n=$(wc -w <<< "$CHANNELS")
+        label=$CHANNEL_KEYWORD
+        [[ -n $label ]] || { ((n <= 4)) && label=${CHANNELS// /-} || label=${n}ch; }
+        tag=no_coinc_$label
+        ((MAX_WAVEFORMS)) && tag+=_n$MAX_WAVEFORMS
+        tag+=_r${rate:-default}_$hash
+    fi
+    echo "${tag//[^A-Za-z0-9_-]/-}"
+}
+
+# The tags in words. Two names run through every output:
+#   cut set (CUTSET)       the recipe: this .env file's name; names the fit folder
+#   sample tag (SAMPLE_TAG) the data the recipe selects: names the selection
+#                          folder (and, without the cuts, the coincidence folder)
 span() { set -- $1; [[ $# -gt 1 ]] && echo "$1..${!#}" || echo "$1"; }  # 2030 .. 2041 -> 2030..2041
-RATE_TEXT=none
-[[ -n $RATE_THRESHOLDS ]] && RATE_TEXT=$(basename "$RATE_THRESHOLDS")
 if [[ $MODE == coincidence ]]; then
     SAMPLE_DESCRIPTION="${TRIGGER%_coinc} coincidence: trigger $(modules_of "$LEFT") ($(span "$LEFT")) vs $(modules_of "$RIGHT") ($(span "$RIGHT")), saving $(modules_of "$SAVE") ($(span "$SAVE")), window $WINDOW_TICKS ticks, min amplitude $MIN_AMPLITUDE_ADC ADC"
 else
-    SAMPLE_DESCRIPTION="no coincidence: every waveform of ${CHANNEL_LABEL//-/ }"
+    SAMPLE_DESCRIPTION="no coincidence: every waveform of ${CHANNEL_KEYWORD:-$CHANNELS}"
     ((MAX_WAVEFORMS)) && SAMPLE_DESCRIPTION+=", at most $MAX_WAVEFORMS per channel and run"
 fi
-SAMPLE_DESCRIPTION+=", rate cut $RATE_TEXT"
+SAMPLE_DESCRIPTION+=", rate cut $RATE_TEXT, intervals $(basename "$INTERVALS")"
+SAMPLE_DESCRIPTION+=", noise/post-signal < $MAX_AUX_ADC ADC, full range < $MAX_FULL_RANGE_ADC ADC"
+[[ $MODE == single ]] && ((REQUIRE_PEAK)) && SAMPLE_DESCRIPTION+=", significant peak required"
 
 COINC_DIR=$REPO_DIR/coincidence/saved_coincidences/$COINC_TAG
-SELECT_DIR=$REPO_DIR/coincidence/selected_waveforms/$COINC_TAG
+SELECT_DIR=$REPO_DIR/coincidence/selected_waveforms/$SAMPLE_TAG
 OUTPUT_ROOT=${PDS_OUTPUT:-$REPO_DIR/output}
 FIT_DIR=$OUTPUT_ROOT/pipeline/$CUTSET/$RUN_SET
 
-# Snapshot of the selection settings. A cut set whose file changed after its
-# selection ran must be rerun with --force selection (or given a new name),
-# otherwise its folder would mix two selections.
+# Settings snapshots: what a folder was made from, including the contents of
+# the threshold and intervals files, which the tags only name. A folder made
+# from other contents is refused until the stage is rerun with --force.
+COINC_SETTINGS=
+[[ $MODE == coincidence ]] && COINC_SETTINGS=$(
+    echo "trigger=$TRIGGER left=$LEFT right=$RIGHT save=$SAVE"
+    echo "window_ticks=$WINDOW_TICKS min_amplitude_adc=$MIN_AMPLITUDE_ADC"
+    echo "rate_thresholds=$RATE_TEXT sha1=$RATE_SHA1"
+    echo "intervals=$(basename "$INTERVALS") sha1=$(intervals_for_coincidence | sha1sum | cut -c1-12)"
+)
+# Lines 3.. match the previous scheme's snapshot from line 2 on, which
+# migrate_tags.sh relies on.
 SELECTION_SETTINGS=$(
-    echo "coinc_tag=$COINC_TAG"
+    echo "sample_tag=$SAMPLE_TAG"
+    echo "rate_thresholds=$RATE_TEXT sha1=$RATE_SHA1"
     echo "max_aux_adc=$MAX_AUX_ADC"
     echo "max_full_range_adc=$MAX_FULL_RANGE_ADC"
     if [[ $MODE == single ]]; then
@@ -266,10 +364,15 @@ SELECTION_SETTINGS=$(
     cat "$INTERVALS"
 )
 
-if ((PRINT_TAG)); then
-    echo "$COINC_TAG"
-    exit 0
-fi
+case $PRINT in
+    "") ;;
+    tag)                echo "$SAMPLE_TAG"; exit 0 ;;
+    coinc-tag)          echo "$COINC_TAG"; exit 0 ;;
+    legacy-tag)         legacy_tag; exit 0 ;;
+    selection-settings) printf '%s\n' "$SELECTION_SETTINGS"; exit 0 ;;
+    coinc-settings)     [[ $MODE == coincidence ]] && printf '%s\n' "$COINC_SETTINGS"; exit 0 ;;
+    *) die "--print takes tag, coinc-tag, legacy-tag, selection-settings or coinc-settings" ;;
+esac
 
 mapfile -t RUN_LINES < <(cd "$REPO_DIR" && "$PYTHON" -m pds.runs "$RUN_SET")
 
@@ -294,6 +397,27 @@ for module in $MODULES; do
 done
 ((${#RUN_LINES[@]})) || die "no runs in run set $RUN_SET"
 
+# Light-yield channels: LY_CHANNELS, else the channels of MODULES (as fitted),
+# else every selected channel. Averaged into one S/S0 curve.
+if [[ -n $LY_CHANNELS ]]; then
+    LY_CHANNELS=$(expand_channels LY_CHANNELS "$LY_CHANNELS")
+    for ch in $LY_CHANNELS; do
+        [[ " $SELECTED_CHANNELS " == *" $ch "* ]] \
+            || die "LY_CHANNELS: channel $ch is not selected by this cut set (selected: $SELECTED_CHANNELS)"
+    done
+elif [[ -n $MODULES ]]; then
+    for module in $MODULES; do
+        for line in "${MODULE_LINES[@]}"; do
+            [[ $line == "$module "* ]] && LY_CHANNELS+=" ${line#* }"
+        done
+    done
+    LY_CHANNELS=$(printf '%s\n' $LY_CHANNELS | sort -n -u | tr '\n' ' ')
+    LY_CHANNELS=${LY_CHANNELS% }
+else
+    LY_CHANNELS=$SELECTED_CHANNELS
+fi
+LY_DIR=$FIT_DIR/lightyield
+
 run_cmd() {
     printf '+'; printf ' %q' "$@"; printf '\n'
     ((DRY_RUN)) || "$@"
@@ -317,12 +441,14 @@ fi
 cat <<EOF
 ============================================================
 Cut set    (the recipe) : $CUTSET   ($CUTSET_FILE)
-Sample tag (the data)   : $COINC_TAG
+Sample tag (the data)   : $SAMPLE_TAG
                           = $SAMPLE_DESCRIPTION
-Channels                : ${SAVE:-$CHANNELS}
+${COINC_TAG:+Coincidence tag         : $COINC_TAG
+}Channels                : ${SAVE:-$CHANNELS}
 Run set                 : $RUN_SET (${#RUN_LINES[@]} runs)
 Stages                  : $STAGES${FORCE:+   (forced: $FORCE)}
 Fit                     : ${MODULES:-none}  (templates: $TEMPLATES)
+Light yield channels    : $LY_CHANNELS
 Selection folder (tag)  : $SELECT_DIR
 Fit folder (cut set)    : $FIT_DIR
 ============================================================
@@ -345,12 +471,18 @@ if has "$STAGES" coincidence && [[ $MODE == single ]]; then
 elif has "$STAGES" coincidence; then
     ((DRY_RUN)) || make -C "$REPO_DIR/coincidence" run_coincidence
     ((DRY_RUN)) || mkdir -p "$COINC_DIR"
-    ((DRY_RUN)) || { echo "# written by pipeline/run_pipeline.sh"
-      echo "trigger=$TRIGGER left=$LEFT right=$RIGHT save=$SAVE"
-      echo "window_ticks=$WINDOW_TICKS min_amplitude_adc=$MIN_AMPLITUDE_ADC"
-      echo "rate_thresholds=${RATE_THRESHOLDS:-none}"
-      echo "intervals=$INTERVALS"
-    } > "$COINC_DIR/pipeline_coincidence_settings.txt"
+    settings_file=$COINC_DIR/pipeline_coincidence_settings.txt
+    if has "$FORCE" coincidence; then
+        ((DRY_RUN)) || rm -f "$settings_file"
+    elif [[ -f $settings_file ]] && [[ $(cat "$settings_file") != "$COINC_SETTINGS" ]]; then
+        die "$COINC_DIR was made from other inputs:
+$(diff <(cat "$settings_file") <(printf '%s\n' "$COINC_SETTINGS") | sed 's/^/       /')
+       The rate-threshold or intervals file changed since. Rerun with
+       --force coincidence (and --force selection) to replace it."
+    fi
+    if [[ ! -f $settings_file ]] && ! ((DRY_RUN)); then
+        printf '%s\n' "$COINC_SETTINGS" > "$settings_file"
+    fi
 
     for line in "${RUN_LINES[@]}"; do
         read -r kv run <<< "$line"
@@ -392,10 +524,10 @@ if has "$STAGES" selection; then
     if has "$FORCE" selection; then
         ((DRY_RUN)) || rm -f "$SELECT_DIR"/.done_* "$settings_file"
     elif [[ -f $settings_file ]] && [[ $(cat "$settings_file") != "$SELECTION_SETTINGS" ]]; then
-        die "$SELECT_DIR holds a selection made with other waveform cuts.
-       Either cut set $CUTSET changed since its selection ran, or another cut set
-       with the same coincidence settings selected into this folder.
-       Rerun with --force selection to replace it (fits of other cut sets are kept)."
+        die "$SELECT_DIR was made from other inputs:
+$(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^/       /')
+       The rate-threshold or intervals file changed since its selection ran.
+       Rerun with --force selection to replace it."
     fi
     # written only when new, so its time stamp marks the last real change
     # (the fit stage reruns when it is newer than the fit)
@@ -404,7 +536,7 @@ if has "$STAGES" selection; then
     fi
     if [[ ! -f $SELECT_DIR/sample.txt ]] && ! ((DRY_RUN)); then
         printf 'sample tag : %s\n           = %s\nchannels   : %s\nselected by cut set %s (%s)\n' \
-            "$COINC_TAG" "$SAMPLE_DESCRIPTION" "${SAVE:-$CHANNELS}" "$CUTSET" "$CUTSET_FILE" \
+            "$SAMPLE_TAG" "$SAMPLE_DESCRIPTION" "${SAVE:-$CHANNELS}" "$CUTSET" "$CUTSET_FILE" \
             > "$SELECT_DIR/sample.txt"
     fi
 
@@ -428,7 +560,7 @@ if has "$STAGES" selection; then
             run_cmd "$REPO_DIR/bin/only_selection" \
                 --config "$INTERVALS" \
                 --output-dir "$SELECT_DIR" \
-                --tag "$COINC_TAG" --run "$run" \
+                --tag "$SAMPLE_TAG" --run "$run" \
                 "${single_args[@]}" \
                 --max-auxiliary-amplitude "$MAX_AUX_ADC" \
                 --max-full-range-amplitude "$MAX_FULL_RANGE_ADC" \
@@ -444,6 +576,7 @@ if has "$STAGES" selection; then
                 --config "$INTERVALS" \
                 --output-dir "$SELECT_DIR" \
                 --csv "$csv" \
+                --tag "$SAMPLE_TAG" \
                 --max-auxiliary-amplitude "$MAX_AUX_ADC" \
                 --max-full-range-amplitude "$MAX_FULL_RANGE_ADC" \
                 "$input"
@@ -452,37 +585,46 @@ if has "$STAGES" selection; then
     done
 fi
 
-# ---------------------------------------------------------------- stage 3
-# The fit is current when it ran after the last selection change and after
-# every selected run of this run set, with the same modules.
-fit_is_current() {
-    [[ -f $FIT_DIR/.done && $(cat "$FIT_DIR/.done") == "$MODULES templates=$TEMPLATES" ]] || return 1
-    [[ $FIT_DIR/.done -nt $SELECT_DIR/pipeline_selection_settings.txt ]] || return 1
+# ------------------------------------------- shared by the fit and light yield
+# A stage reading the selection is current when its MARKER holds the same
+# settings (KEY) and is newer than the last selection change and every
+# selected run of this run set.
+is_current() {  # MARKER KEY
+    [[ -f $1 && $(cat "$1") == "$2" ]] || return 1
+    [[ $1 -nt $SELECT_DIR/pipeline_selection_settings.txt ]] || return 1
     local line kv run
     for line in "${RUN_LINES[@]}"; do
         read -r kv run <<< "$line"
-        [[ $FIT_DIR/.done -nt $SELECT_DIR/.done_$run ]] || return 1
+        [[ $1 -nt $SELECT_DIR/.done_$run ]] || return 1
     done
 }
+# The selection folder must hold this cut set's selection.
+require_own_selection() {  # STAGE
+    local settings_file=$SELECT_DIR/pipeline_selection_settings.txt
+    [[ -f $settings_file ]] \
+        || die "no selection in $SELECT_DIR; run the selection stage first"
+    [[ $(cat "$settings_file") == "$SELECTION_SETTINGS" ]] \
+        || die "$SELECT_DIR was selected from other inputs (the rate-threshold or
+       intervals file changed since). Rerun with --stages selection,$1 --force selection."
+}
+
+# ---------------------------------------------------------------- stage 3
+FIT_KEY="$MODULES templates=$TEMPLATES"
 if has "$STAGES" fit; then
     if ! ((DRY_RUN)) && ! has "$FORCE" fit \
-        && fit_is_current; then
+        && is_current "$FIT_DIR/.done" "$FIT_KEY"; then
         echo "[cached] fit  ($FIT_DIR)"
     else
         if ! ((DRY_RUN)); then
+            require_own_selection fit
             settings_file=$SELECT_DIR/pipeline_selection_settings.txt
-            [[ -f $settings_file ]] \
-                || die "no selection in $SELECT_DIR; run the selection stage first"
-            [[ $(cat "$settings_file") == "$SELECTION_SETTINGS" ]] \
-                || die "$SELECT_DIR holds another cut set's selection (different waveform cuts).
-       Rerun with --stages selection,fit --force selection to fit cut set $CUTSET."
             mkdir -p "$FIT_DIR/selection"
             cp "$CUTSET_FILE" "$FIT_DIR/cutset.env"
             printf 'cut set    : %s\nsample tag : %s\n           = %s\nselection  : %s\nfit        : %s (templates %s), run set %s\n' \
-                "$CUTSET" "$COINC_TAG" "$SAMPLE_DESCRIPTION" "$SELECT_DIR" \
+                "$CUTSET" "$SAMPLE_TAG" "$SAMPLE_DESCRIPTION" "$SELECT_DIR" \
                 "${MODULES:-none}" "$TEMPLATES" "$RUN_SET" > "$FIT_DIR/sample.txt"
             # the cut flow this fit was made on: the selection folder may later
-            # be replaced by another cut set sharing the coincidence tag
+            # be replaced (--force selection) after this fit
             cp "$settings_file" "$SELECT_DIR"/selection_cuts_*.txt "$FIT_DIR/selection/"
         fi
         [[ -n $MODULES ]] || echo "[skip] fit: MODULES is empty (cut flow copied to $FIT_DIR/selection)"
@@ -494,23 +636,51 @@ if has "$STAGES" fit; then
             run_cmd "$PYTHON" "$REPO_DIR/fit/waveform_fits/fitting_bertolini_avg.py" \
                 "$module" --batch \
                 --selection-dir "$SELECT_DIR" \
-                --coinc-tag "$COINC_TAG" \
+                --coinc-tag "$SAMPLE_TAG" \
                 --run-set "$RUN_SET" \
                 --templates "$TEMPLATES" \
                 --cutset "$CUTSET" \
                 --out-dir "$FIT_DIR" || failed+=" $module"
         done
         [[ -z $failed ]] || die "fit failed for module(s)$failed (the others are in $FIT_DIR)"
-        ((DRY_RUN)) || echo "$MODULES templates=$TEMPLATES" > "$FIT_DIR/.done"
+        ((DRY_RUN)) || echo "$FIT_KEY" > "$FIT_DIR/.done"
+    fi
+fi
+
+# ---------------------------------------------------------------- stage 4
+# S/S0 vs field from the integral of the mean waveforms of LY_CHANNELS (the
+# selection's channel_<ch>_*.csv), normalized to 0 kV, with a Birks fit.
+LY_KEY="channels=$LY_CHANNELS"
+if has "$STAGES" lightyield; then
+    if ! ((DRY_RUN)) && ! has "$FORCE" lightyield \
+        && is_current "$LY_DIR/.done" "$LY_KEY"; then
+        echo "[cached] lightyield  ($LY_DIR)"
+    else
+        if ! ((DRY_RUN)); then
+            require_own_selection lightyield
+            mkdir -p "$LY_DIR"
+            rm -f "$LY_DIR/.done"
+        fi
+        echo "---- lightyield  channels $LY_CHANNELS"
+        # shellcheck disable=SC2086
+        run_cmd "$PYTHON" "$REPO_DIR/analysis/LY_vs_EF/fit_LY_wo_template.py" \
+            "$SAMPLE_TAG" --batch \
+            --cutset "$CUTSET" \
+            --runs "$RUN_SET" \
+            --channels $LY_CHANNELS \
+            --out "$LY_DIR" \
+            || die "light yield failed (channels $LY_CHANNELS; each needs its 0 kV run 039510)"
+        ((DRY_RUN)) || echo "$LY_KEY" > "$LY_DIR/.done"
     fi
 fi
 
 cat <<EOF
 
-Done: cut set $CUTSET on sample $COINC_TAG, run set $RUN_SET.
+Done: cut set $CUTSET on sample $SAMPLE_TAG, run set $RUN_SET.
   cut flow per run : $SELECT_DIR/selection_cuts_*.txt
   mean waveforms   : $SELECT_DIR/mean_median_waveforms_*.png
   fit parameters   : $FIT_DIR/plots_bertolini_avg/<module>/parameters/
+  light yield      : $LY_DIR/fit_LY_wo_template_chs_*.{png,txt}
 Compare cut sets:
   $PYTHON pipeline/compare_cutsets.py --runs $RUN_SET $CUTSET OTHER_CUTSET ...
 EOF

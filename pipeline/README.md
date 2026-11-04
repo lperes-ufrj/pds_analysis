@@ -15,6 +15,9 @@ python3 pipeline/compare_cutsets.py workflow_fast  # efficiency and fit summary
 python3 pipeline/compare_cutsets.py --runs full workflow_all
 ```
 
+To compare workflows, fits and light yields included, see
+[`analysis/comparison/`](../analysis/comparison/README.md).
+
 With the same settings both share one sample, so `workflow_all` only
 processes the 15 runs `workflow_fast` did not. `--runs reduced|full`
 overrides the file's `RUN_SET`. To try other choices, copy one of them to a

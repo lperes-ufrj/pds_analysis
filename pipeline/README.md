@@ -89,7 +89,7 @@ with the same choices share them. Copy
 | `MAX_AUX_ADC` | selection | noise and post-signal amplitude limit |
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; their channels must be saved (`default_coinc` → M7 M8, `inverse_coinc` → M5 M6) |
-| `TEMPLATES` | fit | detector response: `large_pulse` (default) or `francesca`, see below |
+| `TEMPLATES` | fit | detector response: `large_pulse` (default), `francesca` or `lucca`, see below |
 | `LY_CHANNELS` | lightyield | channels averaged into the S/S0 curve; empty = the channels of `MODULES`, or every selected channel when `MODULES` is empty |
 
 `TRIGGER` values (channels: Mk → 20k0 20k1, Ck → 10k0 10k1):
@@ -241,9 +241,10 @@ map: Mk → 20k0 20k1, Ck → 10k0 10k1.
 |---|---|---|
 | `large_pulse` (default) | `reference/large_pulse_templates/` | M1-M8, C1-C8; M2 only array 2, so it is fitted on 2021 alone |
 | `francesca` | `reference/spe_templates/francesca/` | M5-M8 |
+| `lucca` | `reference/spe_templates/lucca/` | M8 (run 039366, variant 9C) |
 
 The fit window and t0 limits were tuned on M5, M6 and M8 with the francesca
-templates; the other modules use a 3 µs window and t0 in [0.9, 1.4] µs.
+templates (M8 with `lucca` has its own: 4.5 µs, t0 in [0.84, 1.04] µs); the other modules use a 3 µs window and t0 in [0.9, 1.4] µs.
 On the reduced default_coinc sample (`workflow_fast`), M8 gives τ_eff(0) = 1445 ns with
 large_pulse against 1386 ns with francesca. M7 does not fit with either set
 (τ_s at its 0.7 µs limit, χ²/ndf in the thousands), so the M7 mean waveform

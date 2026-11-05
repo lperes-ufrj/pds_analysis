@@ -147,8 +147,8 @@ done
 [[ $REQUIRE_PEAK == [01] ]] || die "REQUIRE_PEAK must be 0 or 1, got '$REQUIRE_PEAK'"
 [[ $MAX_WAVEFORMS =~ ^[0-9]+$ ]] || die "MAX_WAVEFORMS must be a non-negative integer"
 [[ $CHANNELS_PER_PASS =~ ^[0-9]+$ ]] || die "CHANNELS_PER_PASS must be a non-negative integer"
-case $TEMPLATES in large_pulse|francesca) ;;
-    *) die "TEMPLATES must be 'large_pulse' or 'francesca', got '$TEMPLATES'" ;; esac
+case $TEMPLATES in large_pulse|francesca|lucca) ;;
+    *) die "TEMPLATES must be 'large_pulse', 'francesca' or 'lucca', got '$TEMPLATES'" ;; esac
 
 repo_path() { [[ $1 == /* ]] && echo "$1" || echo "$REPO_DIR/$1"; }
 INTERVALS=$(repo_path "$INTERVALS")

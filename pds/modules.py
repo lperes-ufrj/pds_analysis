@@ -9,6 +9,7 @@ Template sets (one file per module and SiPM array, template_RUN_MODULE_ARRAY.txt
     large_pulse  reference/large_pulse_templates/  (default) LED large pulses,
                  every module except M2 array 1
     francesca    reference/spe_templates/francesca/  M5, M6, M7, M8
+    lucca        reference/spe_templates/lucca/  M8 (run 039366, variant 9C)
 
 A module's channels are those arrays that have a template in the set, so M2
 fits channel 2021 alone with large_pulse.
@@ -25,6 +26,7 @@ REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
 TEMPLATE_SETS = {
     "large_pulse": REFERENCE_DIR / "large_pulse_templates",
     "francesca": REFERENCE_DIR / "spe_templates" / "francesca",
+    "lucca": REFERENCE_DIR / "spe_templates" / "lucca",
 }
 DEFAULT_TEMPLATES = "large_pulse"
 MODULE_NAMES = tuple(f"M{i}" for i in range(1, 9)) + tuple(f"C{i}" for i in range(1, 9))

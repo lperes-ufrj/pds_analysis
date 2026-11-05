@@ -19,8 +19,18 @@ what pipeline/run_pipeline.sh uses to fit one cut set:
     --out-dir DIR         output folder (default $PDS_OUTPUT/fit/waveform_fits)
     --cutset NAME         pipeline cut set, recorded in the parameter tables
     --templates SET       detector response: large_pulse (default, every
-                          module M1-M8 and C1-C8) or francesca (M5 M6 M8),
-                          see pds/modules.py
+                          module M1-M8 and C1-C8), francesca (M5 M6 M8) or
+                          lucca (M8), see pds/modules.py
+    --propagate-uncertainties
+                          fit with propagated uncertainties: the input mean
+                          waveform, the E=0 peak normalization, one tick of
+                          time resolution and the template (Monte Carlo over
+                          sigma_*.txt of the set) enter a generalized chi2.
+                          Without sigma files the template term is zero.
+    --covariance-mode M   marginal (default: propagated per-tick variances),
+                          shrinkage (full covariance shrunk to its diagonal)
+                          or full. Only with --propagate-uncertainties
+    --cov-shrinkage X     weight of the diagonal in shrinkage mode (0.05)
     --batch               no interactive Minuit windows (also when no TTY)
 """
 import argparse
@@ -34,6 +44,7 @@ import numpy as np
 import dunestyle.matplotlib as dunestyle
 from iminuit import Minuit
 from iminuit.cost import LeastSquares
+from scipy.fft import next_fast_len
 
 # caminhos ancorados no proprio script: funciona de qualquer diretorio
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # <repo>/fit/waveform_fits
@@ -61,6 +72,14 @@ def parse_args():
     parser.add_argument('--templates', default=pds_modules.DEFAULT_TEMPLATES,
                         choices=tuple(pds_modules.TEMPLATE_SETS),
                         help='template set for the detector response')
+    parser.add_argument('--propagate-uncertainties', action='store_true',
+                        help='generalized chi2 with data, normalization, tick '
+                             'and template uncertainties propagated')
+    parser.add_argument('--covariance-mode', default='marginal',
+                        choices=('marginal', 'shrinkage', 'full'),
+                        help='covariance used with --propagate-uncertainties')
+    parser.add_argument('--cov-shrinkage', type=float, default=0.05,
+                        help='diagonal weight for --covariance-mode shrinkage')
     parser.add_argument('--cutset', default=None,
                         help='pipeline cut-set name, recorded in the tables')
     parser.add_argument('--batch', action='store_true',
@@ -70,6 +89,7 @@ def parse_args():
 
 ARGS = parse_args()
 INTERACTIVE = not ARGS.batch and sys.stdin.isatty()
+PROPAGATE = ARGS.propagate_uncertainties
 
 OUT_DIR = ARGS.out_dir or str(paths.FIT_DIR / 'waveform_fits')  # plots and parameters
 
@@ -151,12 +171,21 @@ MODULE_CONFIG = {
 # escolhido (--templates; pds/modules.py): canais e templates vem de la, e os
 # valores acima seguem valendo para M5, M6 e M8. Os demais usam FIT_MAX = 3 us
 # e a janela larga T0_LIMITS_UNTUNED, definida mais abaixo.
+# Ajuste proprio de um conjunto de templates: tem prioridade sobre os valores
+# acima. lucca/M8 (run 039366, 9C): a subida medida do template comeca antes
+# da janela de t0 da Francesca (1.008 +- 0.010 us), entao t0 fica em
+# [0.84, 1.04] us (semente 0.94) e o teto da janela de fit vai para 4.5 us.
+SET_TUNING = {
+    'lucca': {'M8': dict(fit_max=4.5, t0_limits=(0.84, 1.04), t0_seed=0.94)},
+}
+
 TEMPLATE_DIR = pds_modules.TEMPLATE_SETS[ARGS.templates]
 _tuned = MODULE_CONFIG
 MODULE_CONFIG = {}
 for _mod, _entries in pds_modules.templates(ARGS.templates).items():
     _cfg = {k: v for k, v in _tuned.get(_mod, {}).items()
             if k not in ('channels', 'templates')}
+    _cfg.update(SET_TUNING.get(ARGS.templates, {}).get(_mod, {}))
     _cfg.setdefault('subdir', None)          # so com --selection-dir
     _cfg.setdefault('pattern', PATTERN_NEW)
     _cfg.setdefault('skip_fields', ())
@@ -393,6 +422,113 @@ def coincidence_mean(run):
 
 FIT_KERNEL = np.mean([make_causal_kernel(_tmpl) for _tmpl in module_templates], axis=0)
 
+if PROPAGATE:
+    # --- incertezas propagadas ------------------------------------------
+    # sigma por tick de cada template: sigma_<run>_<modulo>_<array>.txt na
+    # pasta do conjunto (so o conjunto lucca traz). Sem o arquivo, zero.
+    def _template_sigma_for(name):
+        path = TEMPLATE_DIR / name.replace('template_', 'sigma_', 1)
+        if not path.is_file():
+            print(f'[aviso] {path.name} nao existe: incerteza do template = 0')
+            return np.zeros(len(time_array))
+        return np.loadtxt(path)
+
+    template_sigmas = [_template_sigma_for(n) for n in CFG['templates']]
+
+    # Monte Carlo atraves de baseline, deslocamento causal, area unitaria e
+    # media dos kernels dos dois canais. O 9C duplica cada valor em dois
+    # ticks vizinhos, entao cada par recebe uma unica flutuacao.
+    TEMPLATE_MC_DRAWS = 400
+    TEMPLATE_MC_SEED = 3966
+
+    def causal_kernel_with_rise(template, rise, n_baseline=5):
+        k = np.asarray(template, dtype=float).copy()
+        if rise > n_baseline:
+            k -= np.median(k[:rise - n_baseline])
+        k = np.roll(k, -rise)
+        if rise > 0:
+            k[-rise:] = 0.0
+        area = k.sum() * (SAMPLE / 1000.0)
+        if not np.isfinite(area) or area <= 0:
+            raise ValueError(f'Invalid causal-kernel area: {area}')
+        return k / area
+
+    def draw_smoothed_template(template, sigma, rng):
+        pair_sigma = sigma[0::2]
+        if len(pair_sigma) * 2 != len(template):
+            raise ValueError('pairwise smoothing expects an even template length')
+        return template + np.repeat(rng.normal(size=len(pair_sigma)) * pair_sigma, 2)
+
+    _rng_template = np.random.default_rng(TEMPLATE_MC_SEED)
+    _rises = [int(np.argmax(np.abs(np.diff(t)))) for t in module_templates]
+    kernel_draws = np.empty((TEMPLATE_MC_DRAWS, len(time_array)))
+    for _draw in range(TEMPLATE_MC_DRAWS):
+        kernel_draws[_draw] = np.mean([
+            causal_kernel_with_rise(
+                draw_smoothed_template(t, sg, _rng_template), r)
+            for t, sg, r in zip(module_templates, template_sigmas, _rises)
+        ], axis=0)
+
+    # os sorteios ficam no dominio da frequencia; a cada passo do fit a
+    # covariancia deles e propagada pelo forward-fold
+    _FFT_LENGTH = next_fast_len(2 * len(time_array) - 1)
+    _KERNEL_DRAW_FFT = np.fft.rfft(kernel_draws, n=_FFT_LENGTH, axis=1)
+
+    def source_light(t0, Aslow, Afast, tau_slow, tau_fast):
+        light = np.zeros_like(time_array)
+        active = time_array >= t0
+        light[active] = (
+            Aslow * np.exp(-(time_array[active] - t0) / tau_slow)
+            + Afast * np.exp(-(time_array[active] - t0) / tau_fast)
+        )
+        return light
+
+    def template_model_covariance(parameters, fit_mask):
+        source_fft = np.fft.rfft(source_light(**parameters), n=_FFT_LENGTH)
+        folded = np.fft.irfft(
+            _KERNEL_DRAW_FFT * source_fft[None, :], n=_FFT_LENGTH, axis=1
+        )[:, :len(time_array)] * (SAMPLE / 1000.0)
+        return np.cov(folded[:, fit_mask], rowvar=False, ddof=1)
+
+    def normalized_waveform_covariance(raw, raw_sigma, norm, norm_sigma, same_as_norm):
+        # metodo delta para y = raw / norm; os ticks da media sao tratados
+        # como independentes antes da normalizacao comum
+        n = len(raw)
+        if raw_sigma is None:
+            tail = raw[time_array > 8]
+            raw_sigma = np.full(n, np.std(tail - np.mean(tail)))
+        raw_sigma = np.asarray(raw_sigma, dtype=float)
+        y = raw / norm
+        if same_as_norm:
+            k = int(np.argmax(raw))
+            jacobian = np.eye(n) / norm
+            jacobian[:, k] -= raw / norm**2
+            covariance = (jacobian * raw_sigma[None, :]**2) @ jacobian.T
+        else:
+            covariance = np.diag((raw_sigma / norm)**2)
+            covariance += np.outer(raw, raw) * (norm_sigma / norm**2)**2
+        return y, covariance
+
+    def _shape_covariance(covariance):
+        # modo de covariancia; depois um jitter minimo para o Cholesky
+        if ARGS.covariance_mode == 'marginal':
+            covariance = np.diag(np.diag(covariance))
+        elif ARGS.covariance_mode == 'shrinkage':
+            diagonal = np.diag(np.diag(covariance))
+            covariance = ((1.0 - ARGS.cov_shrinkage) * covariance
+                          + ARGS.cov_shrinkage * diagonal)
+        scale = max(float(np.median(np.diag(covariance))), 1e-12)
+        return covariance + np.eye(len(covariance)) * scale * 1e-10
+
+    def fit_covariance_at(parameters, data_covariance, fit_mask):
+        pred = model(time_array, **parameters)
+        time_sigma = 1.0 / np.sqrt(12.0) * SAMPLE / 1000.0   # 1 tick, uniforme
+        slope = np.gradient(pred, time_array)
+        tick_covariance = np.diag((slope[fit_mask] * time_sigma)**2)
+        total = (data_covariance[np.ix_(fit_mask, fit_mask)] + tick_covariance
+                 + template_model_covariance(parameters, fit_mask))
+        return _shape_covariance(total)
+
 fig, ax = plt.subplots(1, 2, figsize=(11, 4.5))
 
 ax[0].scatter(time_array, module_templates[-1], s=3, label='template bruto')
@@ -504,7 +640,7 @@ FIT_MIN = 0.25    # us
 FIT_MAX = CFG.get('fit_max', 3)  # us
 
 initial_guesses = {
-    't0': T0_CENTER,
+    't0': CFG.get('t0_seed', T0_CENTER),
     'Aslow': 1.16,
     # 63.3 * 0.00162 / 0.006 = 17.1: preserva o produto A_f*tau_f do ajuste
     # interativo, que foi feito com tau_fast = 1.62 ns
@@ -532,14 +668,29 @@ for field, run in runs.items():
 
     waveform, waveform_err = coincidence_mean(run)
 
-    # normalize by E_0 peak
-    if field == 0:
-        norm_factor = waveform.max()
+    if PROPAGATE:
+        # normaliza pelo pico de E=0 propagando a incerteza dessa
+        # normalizacao comum para a covariancia da forma de onda
+        waveform_raw, waveform_err_raw = waveform, waveform_err
+        if field == 0:
+            norm_index = int(np.argmax(waveform_raw))
+            norm_factor = waveform_raw[norm_index]
+            norm_sigma = (np.std(waveform_raw[time_array > 8])
+                          if waveform_err_raw is None
+                          else waveform_err_raw[norm_index])
+        waveform, waveform_covariance = normalized_waveform_covariance(
+            waveform_raw, waveform_err_raw, norm_factor, norm_sigma,
+            same_as_norm=(field == 0))
+        waveform_err = np.sqrt(np.maximum(np.diag(waveform_covariance), 0.0))
+    else:
+        # normalize by E_0 peak
+        if field == 0:
+            norm_factor = waveform.max()
 
-    waveform = waveform / norm_factor
+        waveform = waveform / norm_factor
 
-    if waveform_err is not None:
-        waveform_err = waveform_err / norm_factor
+        if waveform_err is not None:
+            waveform_err = waveform_err / norm_factor
 
     fig, ax = plt.subplots()
 
@@ -569,27 +720,59 @@ for field, run in runs.items():
     mask = (time_array > FIT_MIN) & (time_array < FIT_MAX)
 
     x = time_array[mask]
-    y = waveform[mask]  
-    yerr = fit_uncertainty(waveform, waveform_err, mask)
+    y = waveform[mask]
 
-    cost = LeastSquares(x, y, yerr, model)
+    if PROPAGATE:
+        # chi2 generalizado; a covariancia e recalculada tres vezes
+        # (passando pelo forward-fold) a partir da semente de cada passo
+        fit_seed = dict(seed)
+        for _pass in range(3):
+            total_fit_covariance = fit_covariance_at(
+                fit_seed, waveform_covariance, mask)
+            covariance_cholesky = np.linalg.cholesky(total_fit_covariance)
 
-    m = Minuit(
-        cost,
-        **seed
-    )
+            def generalized_chi2(t0, Aslow, Afast, tau_slow, tau_fast):
+                residual = y - model(x, t0, Aslow, Afast, tau_slow, tau_fast)
+                whitened = np.linalg.solve(covariance_cholesky, residual)
+                return float(whitened @ whitened)
 
-    for _name, _lim in LIMITS.items():
-        m.limits[_name] = _lim
+            m = Minuit(generalized_chi2, **fit_seed)
+            m.errordef = Minuit.LEAST_SQUARES
+            for _name, _lim in LIMITS.items():
+                m.limits[_name] = _lim
+            m.fixed['tau_fast'] = True
+            m.migrad()
+            m.hesse()
+            if m.valid:
+                fit_seed = m.values.to_dict()
 
-    m.fixed['tau_fast'] = True
+        # banda e chi2 finais com a covariancia do ultimo ajuste
+        total_fit_covariance = fit_covariance_at(
+            m.values.to_dict(), waveform_covariance, mask)
+        covariance_cholesky = np.linalg.cholesky(total_fit_covariance)
+        _whitened = np.linalg.solve(covariance_cholesky, y - model(x, *m.values))
+        chi2_propagated = float(_whitened @ _whitened)
+    else:
+        yerr = fit_uncertainty(waveform, waveform_err, mask)
 
-    # descomente para reabrir o painel interativo num campo especifico
-    if field == 0 and INTERACTIVE:
-        m.interactive()
+        cost = LeastSquares(x, y, yerr, model)
 
-    m.migrad()
-    m.hesse()
+        m = Minuit(
+            cost,
+            **seed
+        )
+
+        for _name, _lim in LIMITS.items():
+            m.limits[_name] = _lim
+
+        m.fixed['tau_fast'] = True
+
+        # descomente para reabrir o painel interativo num campo especifico
+        if field == 0 and INTERACTIVE:
+            m.interactive()
+
+        m.migrad()
+        m.hesse()
 
     # semeia o proximo campo com este resultado; se o ajuste falhou, mantem
     # a semente anterior em vez de propagar um minimo ruim
@@ -601,7 +784,7 @@ for field, run in runs.items():
     parameters = m.values
     errors = m.errors
 
-    chisquared = m.fval
+    chisquared = chi2_propagated if PROPAGATE else m.fval
     ndof = len(x) - m.nfit
     chi2_ndof = chisquared / ndof
 
@@ -634,6 +817,24 @@ for field, run in runs.items():
         rf"$\chi^2$/ndof = {chi2_ndof:.2f}"
     )
 
+
+    if PROPAGATE:
+        _pred = model(x, *m.values)
+        _sig = np.sqrt(np.maximum(np.diag(total_fit_covariance), 0.0))
+        ax.fill_between(x, np.clip(_pred - _sig, 1e-3, None), _pred + _sig,
+                        color='red', alpha=0.18, label='total propagated 1σ band')
+
+        # dado compartilhado e curva ajustada, para sobrepor templates
+        _sigma_full = np.full(len(time_array), np.nan)
+        _sigma_full[mask] = _sig
+        pd.DataFrame({
+            'time_us': time_array,
+            'mean_normalized': waveform,
+            'waveform_sigma_normalized': waveform_err,
+            'fit_model': model(time_array, *m.values),
+            'total_fit_sigma': _sigma_full,
+            'in_fit_window': mask,
+        }).to_csv(f'{output_folder}/fit/fit_samples_{field}kv.csv', index=False)
 
     ax.plot(
         x,
@@ -1090,7 +1291,10 @@ _meta_common = [
     f'drift length  : {DRIFT_LENGTH} m   (E = HV / L)',
     f'janela do fit : {FIT_MIN} - {FIT_MAX} us',
     f'tau_fast      : FIXO em {TAU_FAST_FIXED} us',
-    f'yerr          : YERR_MODE = {YERR_MODE}',
+    (f'yerr          : propagated (data + E=0 normalization + 1 tick + template MC), '
+     f'covariance = {ARGS.covariance_mode}'
+     + (f' (shrinkage {ARGS.cov_shrinkage})' if ARGS.covariance_mode == 'shrinkage' else '')
+     if PROPAGATE else f'yerr          : YERR_MODE = {YERR_MODE}'),
     f'cut set       : {ARGS.cutset or "-"}',
     f'amostra (tag) : {ARGS.coinc_tag or os.path.basename(os.path.normpath(ARGS.selection_dir or "-"))}',
     f'dados         : {os.path.dirname(coincidence_file(runs[0], CHANNELS[0]))}',

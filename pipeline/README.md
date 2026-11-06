@@ -164,8 +164,8 @@ Caveats:
   reference (041523, no file); the driver prints a note. Their light yield
   then fails for lack of a 0 kV point. Set `RATE_THRESHOLDS=` to keep them.
 - The prompt fraction needs the channel's SiPM type, listed in
-  `coincidence_lib.cpp` for 1010-1081 and 2050-2081; other channels get no
-  `fprompt_*.csv`, as the cut summary states.
+  `coincidence_lib.cpp` for 1010-1081 and 2050-2081; other channels still get
+  their `fprompt_*.csv` rows, with `fprompt` = `nan`, as the cut summary states.
 
 ## Caching
 
@@ -197,13 +197,32 @@ Caveats:
 | `coincidence/selected_waveforms/TAG/pipeline_selection_settings.txt`, `sample.txt` | what the folder was selected from; the tag in words |
 | `coincidence/selected_waveforms/TAG/mean_median_waveforms_*.png` | mean, median, 16–84 % band |
 | `coincidence/selected_waveforms/TAG/channel_<ch>_*.csv` | mean waveform per channel and run |
-| `coincidence/selected_waveforms/TAG/fprompt_*.csv` | prompt fraction per waveform |
+| `coincidence/selected_waveforms/TAG/fprompt_*.csv` | one row per final-selection waveform, see below |
 | `coincidence/selected_waveforms/TAG/all_waveforms_*_{from_coincidence,before_cuts,final_selection}.png` | waveform density before and after the cuts |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/plots_bertolini_avg/MODULE/` | fit plots and `parameters/*.txt` |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/selection/` | cut flow the fit was made on |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/sample.txt` | cut set, sample tag spelled out, templates |
 | `$PDS_OUTPUT/pipeline/NAME/RUNSET/lightyield/fit_LY_wo_template_chs_*.{png,txt}` | S/S0 vs field, Birks fit, and the numbers behind the figure |
 | `$PDS_OUTPUT/pipeline/compare/RUNSET/` | `compare_cutsets.py` figures and efficiency table |
+
+`fprompt_<ch>_<label>.csv` columns, one row per waveform that passed the cuts
+(written by `plot_wfs_coincidence` and `only_selection`; the first five are
+the original ones and stay first):
+
+| Column | Meaning |
+|---|---|
+| `run`, `event`, `channel`, `waveform_index_save` | the waveform in the ROOT `WaveformTree` |
+| `fprompt` | prompt fraction; `nan` for channels without a SiPM type |
+| `timestamp` | raw DAQ timestamp [16 ns ticks] |
+| `baseline` | median of the `noise` interval, as subtracted for the mean waveform |
+| `integral_50_500` | trapezoid of ADC − baseline over samples [50, 500), the window of `pds/integrals.py` (`INTEGRAL_FIRST_SAMPLE`, `INTEGRAL_LAST_SAMPLE`, mirrored in `coincidence_lib.hpp`) |
+| `amplitude` | max(ADC − baseline) in the `signal` interval [ADC] |
+| `pulse_start` | pulse start [ticks] |
+| `multiplicity` | coincidence mode: rows of the coincidence CSV naming this waveform (1 for `run_coincidence` output); the mean waveform counts the waveform this many times, so weight averages by it. Always 1 for `no_coinc` |
+| `minimum_timestamp_coinc`, `channel_coincident_left`, `waveform_index_coincident_left`, `channel_coincident_right`, `waveform_index_coincident_right` | coincidence mode only: the coincidence that selected the waveform (the first CSV row when multiplicity > 1) |
+
+The multiplicity-weighted mean of `integral_50_500` equals the integral of the
+mean waveform in `channel_<ch>_*.csv` up to float32 rounding.
 
 The fit runs in batch mode (no interactive Minuit windows). Set `PYTHON` to an
 interpreter with `iminuit` and `dunestyle`, e.g.

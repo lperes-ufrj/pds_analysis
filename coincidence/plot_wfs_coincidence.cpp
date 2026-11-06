@@ -53,43 +53,43 @@ struct CoincidenceOutputIdentity {
     std::string timestamp;
 };
 
-struct WaveformKey {
-    int event = 0;
-    unsigned int channel = 0;
-    int waveform_index = 0;
-
-    bool operator==(const WaveformKey &other) const
-    {
-        return event == other.event && channel == other.channel
-            && waveform_index == other.waveform_index;
-    }
+// The coincidence that selected a saved waveform: columns of its
+// run_coincidence CSV row.
+struct CoincidenceRow {
+    std::uint64_t minimum_timestamp = 0;
+    unsigned int left_channel = 0;
+    int left_waveform_index = 0;
+    unsigned int right_channel = 0;
+    int right_waveform_index = 0;
 };
 
-struct WaveformKeyHash {
-    std::size_t operator()(const WaveformKey &key) const
-    {
-        std::size_t value = std::hash<int>{}(key.event);
-        value ^= std::hash<unsigned int>{}(key.channel)
-            + 0x9e3779b9U + (value << 6U) + (value >> 2U);
-        value ^= std::hash<int>{}(key.waveform_index)
-            + 0x9e3779b9U + (value << 6U) + (value >> 2U);
-        return value;
-    }
+// A waveform key of the coincidence CSV: how many rows name it, and the first
+// of them. run_coincidence writes each saved waveform once (multiplicity 1);
+// a waveform named by several rows keeps the coincidence of the first one.
+struct SelectedWaveform {
+    std::size_t multiplicity = 0;
+    CoincidenceRow first_row;
 };
+
+using SelectedWaveforms =
+    std::unordered_map<WaveformKey, SelectedWaveform, WaveformKeyHash>;
 
 struct LocatedWaveform {
     Long64_t entry = 0;
     WaveformKey key;
     std::size_t multiplicity = 1;
+    CoincidenceRow coincidence;
 };
 
-struct FPromptRecord {
-    WaveformKey key;
-    double value = 0.0;
+// One final-selection waveform: one record per waveform, its multiplicity in
+// waveform.multiplicity (the mean waveform counts it that many times).
+struct CoincidenceSummaryRecord {
+    WaveformSummaryRecord waveform;
+    CoincidenceRow coincidence;
 };
 
-using FPromptRecordsByChannel =
-    std::map<unsigned int, std::vector<FPromptRecord>>;
+using SummaryRecordsByChannel =
+    std::map<unsigned int, std::vector<CoincidenceSummaryRecord>>;
 struct CutStatistics {
     std::size_t from_coincidence = 0;
     std::size_t rejected_noise = 0;
@@ -106,7 +106,7 @@ struct CutStatistics {
 struct WaveformSelections {
     RecordsByChannel from_coincidence;
     RecordsByChannel final_selection;
-    FPromptRecordsByChannel final_fprompt;
+    SummaryRecordsByChannel final_summaries;
     CutStatistics cuts;
 };
 
@@ -313,7 +313,7 @@ std::vector<fs::path> readRootFiles(const fs::path &input_list, const fs::path &
     return files;
 }
 
-std::unordered_map<WaveformKey, std::size_t, WaveformKeyHash> readSelectedKeys(
+SelectedWaveforms readSelectedKeys(
     const fs::path &csv_file,
     std::set<unsigned int> &channels,
     std::size_t &row_count
@@ -328,15 +328,29 @@ std::unordered_map<WaveformKey, std::size_t, WaveformKeyHash> readSelectedKeys(
 
     auto column = [&](const std::string &name) {
         const auto found = std::find(header.begin(), header.end(), name);
-        if (found == header.end()) throw std::runtime_error("Missing CSV column: " + name);
+        if (found == header.end()) {
+            throw std::runtime_error(
+                "Missing CSV column " + name + " in " + csv_file.string()
+                + " (written by run_coincidence since 2026-08; rerun the coincidence)"
+            );
+        }
         return static_cast<std::size_t>(std::distance(header.begin(), found));
     };
     const auto event_column = column("event");
     const auto channel_column = column("channel");
     const auto waveform_column = column("waveform_index_save");
-    const auto required_size = std::max({event_column, channel_column, waveform_column}) + 1;
+    const auto minimum_timestamp_column = column("minimum_timestamp_coinc");
+    const auto left_channel_column = column("channel_coincident_left");
+    const auto left_waveform_column = column("waveform_index_coincident_left");
+    const auto right_channel_column = column("channel_coincident_right");
+    const auto right_waveform_column = column("waveform_index_coincident_right");
+    const auto required_size = std::max({
+        event_column, channel_column, waveform_column, minimum_timestamp_column,
+        left_channel_column, left_waveform_column, right_channel_column,
+        right_waveform_column
+    }) + 1;
 
-    std::unordered_map<WaveformKey, std::size_t, WaveformKeyHash> keys;
+    SelectedWaveforms keys;
     row_count = 0;
     while (std::getline(input, line)) {
         if (trim(line).empty()) continue;
@@ -349,7 +363,16 @@ std::unordered_map<WaveformKey, std::size_t, WaveformKeyHash> readSelectedKeys(
             static_cast<unsigned int>(std::stoul(fields[channel_column])),
             std::stoi(fields[waveform_column]),
         };
-        ++keys[key];
+        SelectedWaveform &selected = keys[key];
+        if (selected.multiplicity++ == 0) {
+            selected.first_row = {
+                std::stoull(fields[minimum_timestamp_column]),
+                static_cast<unsigned int>(std::stoul(fields[left_channel_column])),
+                std::stoi(fields[left_waveform_column]),
+                static_cast<unsigned int>(std::stoul(fields[right_channel_column])),
+                std::stoi(fields[right_waveform_column]),
+            };
+        }
         channels.insert(key.channel);
         ++row_count;
     }
@@ -358,7 +381,7 @@ std::unordered_map<WaveformKey, std::size_t, WaveformKeyHash> readSelectedKeys(
 
 std::vector<LocatedWaveform> locateSelectedEntries(
     TChain &chain,
-    const std::unordered_map<WaveformKey, std::size_t, WaveformKeyHash> &selected
+    const SelectedWaveforms &selected
 )
 {
     int event = 0;
@@ -381,7 +404,11 @@ std::vector<LocatedWaveform> locateSelectedEntries(
         }
         const WaveformKey key{event, channel, waveform_index};
         const auto found = selected.find(key);
-        if (found != selected.end()) located.push_back({entry, key, found->second});
+        if (found != selected.end()) {
+            located.push_back({
+                entry, key, found->second.multiplicity, found->second.first_row
+            });
+        }
     }
 
     if (located.size() != selected.size()) {
@@ -405,8 +432,11 @@ WaveformSelections loadWaveforms(
     chain.ResetBranchAddresses();
     chain.SetBranchStatus("*", 0);
     chain.SetBranchStatus("adc", 1);
+    chain.SetBranchStatus("timestamp", 1);
     std::vector<short> *adc = nullptr;
+    ULong64_t timestamp = 0;
     chain.SetBranchAddress("adc", &adc);
+    chain.SetBranchAddress("timestamp", &timestamp);
 
     WaveformSelections selections;
     std::size_t rejected_noise = 0;
@@ -451,17 +481,19 @@ WaveformSelections loadWaveforms(
             continue;
         }
 
-        // Calculate f_prompt only after the existing five cuts have accepted
-        // the waveform. This keeps the selection identical and guarantees that
-        // the exported rows describe exactly the final-selection population.
-        const double fprompt_value = analyzer.fprompt(*adc, item.key.channel);
+        // Summarize the waveform (f_prompt, integral, ...) only after the five
+        // cuts have accepted it, so the exported rows describe exactly the
+        // final-selection population. The mean waveform gets one copy per
+        // coincidence-CSV row; the summary is one record carrying that count
+        // as its multiplicity.
+        WaveformSummaryRecord summary = summarizeWaveform(
+            *adc, item.key, static_cast<std::uint64_t>(timestamp), baseline, analyzer
+        );
+        summary.multiplicity = item.multiplicity;
         for (std::size_t copy = 0; copy < item.multiplicity; ++copy) {
             selections.final_selection[item.key.channel].push_back({baseline, *adc});
-            selections.final_fprompt[item.key.channel].push_back({
-                item.key,
-                fprompt_value
-            });
         }
+        selections.final_summaries[item.key.channel].push_back({summary, item.coincidence});
     }
 
     std::cout
@@ -628,8 +660,14 @@ void writeCutSummary(
 }
 
 
+// One row per final-selection waveform. The run/event/channel/index columns
+// make every row traceable back to the run_coincidence row, and `fprompt` can
+// be histogrammed directly. A waveform named by several coincidence-CSV rows
+// is one row with multiplicity > 1 (the mean waveform counts it that many
+// times, so averages over the rows must weight by multiplicity); its
+// *_coinc* columns are those of the first of those rows.
 void writeFpromptCsvs(
-    const FPromptRecordsByChannel &records_by_channel,
+    const SummaryRecordsByChannel &records_by_channel,
     const std::string &run,
     const std::string &label,
     const fs::path &output_dir,
@@ -638,7 +676,6 @@ void writeFpromptCsvs(
 {
     std::size_t total = 0;
     for (const auto &[channel, records] : records_by_channel) {
-        total += records.size();
         const fs::path filename = output_dir
             / ("fprompt_" + std::to_string(channel) + "_" + label + ".csv");
         std::ofstream output(filename);
@@ -646,31 +683,35 @@ void writeFpromptCsvs(
             throw std::runtime_error("Could not create " + filename.string());
         }
 
-        // The run/event/channel/index columns make every value traceable back
-        // to the run_coincidence row while `fprompt` can be histogrammed
-        // directly for this run/channel file.
-        output << "run,event,channel,waveform_index_save,fprompt\n";
-        output << std::setprecision(std::numeric_limits<double>::max_digits10);
+        output << waveformSummaryCsvHeader()
+               << ",minimum_timestamp_coinc,channel_coincident_left,"
+                  "waveform_index_coincident_left,channel_coincident_right,"
+                  "waveform_index_coincident_right\n";
+        std::size_t channel_total = 0;
         for (const auto &record : records) {
-            if (record.key.channel != channel) {
+            if (record.waveform.key.channel != channel) {
                 throw std::runtime_error("Internal channel mismatch in fprompt records");
             }
-            output << run << ','
-                   << record.key.event << ','
-                   << record.key.channel << ','
-                   << record.key.waveform_index << ','
-                   << record.value << '\n';
+            channel_total += record.waveform.multiplicity;
+            writeWaveformSummaryCsvFields(output, run, record.waveform);
+            output << ',' << record.coincidence.minimum_timestamp
+                   << ',' << record.coincidence.left_channel
+                   << ',' << record.coincidence.left_waveform_index
+                   << ',' << record.coincidence.right_channel
+                   << ',' << record.coincidence.right_waveform_index << '\n';
         }
         if (!output) {
             throw std::runtime_error("Failed while writing " + filename.string());
         }
-        std::cout << "Saved " << records.size() << " fprompt values to "
-                  << filename << '\n';
+        total += channel_total;
+        std::cout << "Saved " << records.size() << " waveform records ("
+                  << channel_total << " with multiplicity) to " << filename << '\n';
     }
 
+    // the final selection counts every waveform multiplicity times
     if (total != expected_total) {
         throw std::runtime_error(
-            "Internal fprompt row-count mismatch: expected "
+            "Internal fprompt row-count mismatch: expected a multiplicity sum of "
             + std::to_string(expected_total) + ", prepared "
             + std::to_string(total)
         );
@@ -757,7 +798,7 @@ void processInputList(
     );
 
     writeFpromptCsvs(
-        selections.final_fprompt,
+        selections.final_summaries,
         run,
         label,
         options.output_dir,

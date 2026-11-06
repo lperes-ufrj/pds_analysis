@@ -6,13 +6,23 @@ except ImportError:  # NumPy < 2.0 in the Gallery runtime.
 from pathlib import Path
 import re
 
+# Integration window, half-open sample range [first, last). Keep synchronized
+# with INTEGRAL_FIRST_SAMPLE / INTEGRAL_LAST_SAMPLE in
+# coincidence/coincidence_lib.hpp: plot_wfs_coincidence and only_selection
+# write the same trapezoid per waveform (integral_50_500 column of the
+# fprompt_*.csv files), whose multiplicity-weighted mean equals the integral
+# of the mean waveform computed here.
+INTEGRAL_FIRST_SAMPLE = 50
+INTEGRAL_LAST_SAMPLE = 500
+
+
 def calc_integral_and_error(waveform, y_err):
     """Return (I - sigma, I, I + sigma) for uncorrelated sample errors.
 
     x is treated as exact; y_err contains standard errors on y. Trapezoidal
     endpoint and interior weights also support nonuniform sample spacing.
     """
-    y = waveform[50:500]
+    y = waveform[INTEGRAL_FIRST_SAMPLE:INTEGRAL_LAST_SAMPLE]
 
     integral_central = trapezoid(y)
 

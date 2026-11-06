@@ -77,18 +77,8 @@ struct Options {
     std::size_t channels_per_pass = DEFAULT_CHANNELS_PER_PASS;  // 0 = all in one pass
 };
 
-struct WaveformKey {
-    int event = 0;
-    unsigned int channel = 0;
-    int waveform_index = 0;
-};
-
-struct FPromptRecord {
-    WaveformKey key;
-    double value = 0.0;
-};
-
-using FPromptRecordsByChannel = std::map<unsigned int, std::vector<FPromptRecord>>;
+// WaveformKey and WaveformSummaryRecord: coincidence_lib.hpp
+using SummaryRecordsByChannel = std::map<unsigned int, std::vector<WaveformSummaryRecord>>;
 
 // Per-channel counts. "entering" plays the role of plot_wfs_coincidence's
 // "from coincidence": the population the quality cuts are applied to.
@@ -156,7 +146,7 @@ struct ScanResult {
     std::map<unsigned int, BaselineNoise> noise;
     RecordsByChannel before_cuts;      // at most max_plot_waveforms per channel
     RecordsByChannel final_selection;
-    FPromptRecordsByChannel final_fprompt;
+    SummaryRecordsByChannel final_summaries;
 };
 
 // Totals over all passes of one run, for the cut summary.
@@ -456,12 +446,14 @@ ScanResult scanWaveforms(
     Int_t event = 0;
     UInt_t channel = 0;
     Int_t waveform_index = 0;
+    ULong64_t timestamp = 0;
     std::vector<short> samples;
     std::vector<short> *adc = &samples;
     int tree_number = -1;
     TBranch *event_branch = nullptr;
     TBranch *channel_branch = nullptr;
     TBranch *index_branch = nullptr;
+    TBranch *timestamp_branch = nullptr;
     TBranch *adc_branch = nullptr;
 
     ScanResult result;
@@ -487,6 +479,7 @@ ScanResult scanWaveforms(
             event_branch = bindBranch(*tree, "event", &event);
             channel_branch = bindBranch(*tree, "channel", &channel);
             index_branch = bindBranch(*tree, "waveform_index", &waveform_index);
+            timestamp_branch = bindBranch(*tree, "timestamp", &timestamp);
             adc_branch = bindBranch(*tree, "adc", &adc);
             adc_branch->SetAutoDelete(kFALSE);
         }
@@ -541,12 +534,16 @@ ScanResult scanWaveforms(
             ++cuts.final_selection;
             result.noise[channel].add(*adc, baseline);
             result.final_selection[channel].push_back({baseline, *adc});
-            if (analyzer.hasFprompt(channel)) {
-                result.final_fprompt[channel].push_back({
-                    {event, channel, waveform_index},
-                    analyzer.fprompt(*adc, channel)
-                });
+            // every channel gets a record; fprompt is NaN without a SiPM type.
+            // The timestamp is read only for the selected waveforms.
+            if (timestamp_branch->GetEntry(local_entry) <= 0) {
+                throw std::runtime_error(
+                    "Could not read ROOT timestamp at entry " + std::to_string(entry));
             }
+            result.final_summaries[channel].push_back(summarizeWaveform(
+                *adc, {event, channel, waveform_index},
+                static_cast<std::uint64_t>(timestamp), baseline, analyzer
+            ));
         } else {
             ++cuts.rejected_combined;
         }
@@ -611,7 +608,8 @@ void writeCutSummary(
                   std::vector<unsigned int>(channels.begin(), channels.end())) << '\n'
            << "Channels skipped for missing/invalid rate threshold: "
            << joinChannels(dropped_channels) << '\n'
-           << "Channels without prompt fraction (no SiPM type in coincidence_lib.cpp): "
+           << "Channels without prompt fraction (no SiPM type in coincidence_lib.cpp; "
+              "fprompt = nan in their CSV): "
            << joinChannels(no_fprompt) << '\n'
            << "Normalized-rate ADC-threshold file: "
            << (options.rate_threshold_file.empty()
@@ -757,25 +755,25 @@ void writeCutSummary(
 }
 
 void writeFpromptCsvs(
-    const FPromptRecordsByChannel &records_by_channel,
+    const SummaryRecordsByChannel &records_by_channel,
     const std::string &run,
     const std::string &label,
     const fs::path &output_dir
 )
 {
+    // one row per final-selection waveform (multiplicity always 1 here)
     for (const auto &[channel, records] : records_by_channel) {
         const fs::path filename = output_dir
             / ("fprompt_" + std::to_string(channel) + "_" + label + ".csv");
         std::ofstream output(filename);
         if (!output) throw std::runtime_error("Could not create " + filename.string());
-        output << "run,event,channel,waveform_index_save,fprompt\n";
-        output << std::setprecision(std::numeric_limits<double>::max_digits10);
+        output << waveformSummaryCsvHeader() << '\n';
         for (const auto &record : records) {
-            output << run << ',' << record.key.event << ',' << record.key.channel << ','
-                   << record.key.waveform_index << ',' << record.value << '\n';
+            writeWaveformSummaryCsvFields(output, run, record);
+            output << '\n';
         }
         if (!output) throw std::runtime_error("Failed while writing " + filename.string());
-        std::cout << "Saved " << records.size() << " fprompt values to " << filename << '\n';
+        std::cout << "Saved " << records.size() << " waveform records to " << filename << '\n';
     }
 }
 
@@ -805,7 +803,7 @@ void process(const Options &options, const fs::path &repo_dir)
         analyzer.interval(channel, "noise");  // fail early on a missing channel section
         if (!analyzer.hasFprompt(channel)) {
             std::cerr << "Channel " << channel << " has no SiPM type in coincidence_lib.cpp: "
-                      << "no prompt fraction (fprompt CSV) for it\n";
+                      << "fprompt is nan in its CSV\n";
         }
     }
 
@@ -846,7 +844,7 @@ void process(const Options &options, const fs::path &repo_dir)
                       << ", entering " << cuts.entering
                       << ", selected " << cuts.final_selection << '\n';
         }
-        writeFpromptCsvs(scan.final_fprompt, run, label, options.output_dir);
+        writeFpromptCsvs(scan.final_summaries, run, label, options.output_dir);
         if (options.max_plot_waveforms > 0) {
             plotAllWaveformsForSelection(
                 group, scan.before_cuts, run, label,

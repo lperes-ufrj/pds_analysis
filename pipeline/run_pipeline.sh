@@ -29,9 +29,12 @@
 #   coincidence tag  coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV
 #                    trigger channels (one side vs the other), saved
 #                    channels, min amplitude, rate cut
-#   sample tag       coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_aux500_full10000
+#   sample tag       coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_noise500_post2000_full10000
 #                    + the waveform cuts
-#                    no_coinc_save_M8_r292kV_aux500_full10000
+#                    no_coinc_save_M8_r292kV_noise500_post2000_full10000
+# The noise and post-signal limits are written _noise<MAX_NOISE_ADC>_post<MAX_POST_ADC>,
+# or _aux<N> when both are N (the tag of the single limit they replaced, so
+# those samples keep their folders).
 # Optional parts appear only when used: _w<WINDOW_TICKS> (a window other
 # than the standard 10 ticks), _n<MAX_WAVEFORMS>, _iv-<INI name> (an
 # INTERVALS file other than coincidence/waveform_intervals.ini), _peak
@@ -106,13 +109,15 @@ done
 
 # ------------------------------------------------------------------ cut set
 MODE= TRIGGER= WINDOW_TICKS= MIN_AMPLITUDE_ADC= RATE_THRESHOLDS= INTERVALS=
-MAX_AUX_ADC= MAX_FULL_RANGE_ADC= MODULES= CHANNELS= REQUIRE_PEAK= MAX_WAVEFORMS=
+MAX_AUX_ADC= MAX_NOISE_ADC= MAX_POST_ADC= MAX_FULL_RANGE_ADC= MODULES= CHANNELS= REQUIRE_PEAK= MAX_WAVEFORMS=
 CHANNELS_PER_PASS= TEMPLATES= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS= RUN_SET=
 LY_CHANNELS=
 # shellcheck source=/dev/null
 source "$CUTSET_FILE"
 [[ -z $MODE ]] || die "MODE is no longer used: write TRIGGER=no_coinc instead of MODE=single
        (and drop MODE=coincidence) in $CUTSET_FILE"
+[[ -z $MAX_AUX_ADC ]] || die "MAX_AUX_ADC is now two limits: write MAX_NOISE_ADC=$MAX_AUX_ADC and
+       MAX_POST_ADC=$MAX_AUX_ADC instead of MAX_AUX_ADC=$MAX_AUX_ADC (same sample, same tag) in $CUTSET_FILE"
 REQUIRE_PEAK=${REQUIRE_PEAK:-0}
 MAX_WAVEFORMS=${MAX_WAVEFORMS:-0}
 CHANNELS_PER_PASS=${CHANNELS_PER_PASS:-4}
@@ -141,7 +146,7 @@ case $TRIGGER in
     *) die "TRIGGER must be default_coinc, inverse_coinc, custom_coinc or no_coinc, got '$TRIGGER'" ;;
 esac
 # MODULES may be empty for no_coinc and custom_coinc: selection only, no fit.
-for var in $required INTERVALS MAX_AUX_ADC MAX_FULL_RANGE_ADC; do
+for var in $required INTERVALS MAX_NOISE_ADC MAX_POST_ADC MAX_FULL_RANGE_ADC; do
     [[ -n ${!var} ]] || die "$var is not set in $CUTSET_FILE (needed by TRIGGER=$TRIGGER)"
 done
 [[ $REQUIRE_PEAK == [01] ]] || die "REQUIRE_PEAK must be 0 or 1, got '$REQUIRE_PEAK'"
@@ -272,7 +277,14 @@ intervals_for_coincidence() {
     awk '/^[[:space:]]*\[/ { skip = ($0 ~ /\[peak_finder\]/) } !skip' "$INTERVALS"
 }
 
-CUT_LABEL=_aux$(tag_number "$MAX_AUX_ADC")_full$(tag_number "$MAX_FULL_RANGE_ADC")
+# equal noise and post-signal limits keep the tag of the single limit they
+# replaced (_aux<N>), so the samples made with it keep their folders
+if [[ $MAX_NOISE_ADC == "$MAX_POST_ADC" ]]; then
+    CUT_LABEL=_aux$(tag_number "$MAX_NOISE_ADC")
+else
+    CUT_LABEL=_noise$(tag_number "$MAX_NOISE_ADC")_post$(tag_number "$MAX_POST_ADC")
+fi
+CUT_LABEL+=_full$(tag_number "$MAX_FULL_RANGE_ADC")
 if [[ $MODE == coincidence ]]; then
     WINDOW_LABEL=
     [[ $WINDOW_TICKS == "$STANDARD_WINDOW_TICKS" ]] || WINDOW_LABEL=_w$(tag_number "$WINDOW_TICKS")
@@ -332,7 +344,7 @@ else
     ((MAX_WAVEFORMS)) && SAMPLE_DESCRIPTION+=", at most $MAX_WAVEFORMS per channel and run"
 fi
 SAMPLE_DESCRIPTION+=", rate cut $RATE_TEXT, intervals $(basename "$INTERVALS")"
-SAMPLE_DESCRIPTION+=", noise/post-signal < $MAX_AUX_ADC ADC, full range < $MAX_FULL_RANGE_ADC ADC"
+SAMPLE_DESCRIPTION+=", noise < $MAX_NOISE_ADC ADC, post-signal < $MAX_POST_ADC ADC, full range < $MAX_FULL_RANGE_ADC ADC"
 [[ $MODE == single ]] && ((REQUIRE_PEAK)) && SAMPLE_DESCRIPTION+=", significant peak required"
 
 COINC_DIR=$REPO_DIR/coincidence/saved_coincidences/$COINC_TAG
@@ -355,7 +367,13 @@ COINC_SETTINGS=
 SELECTION_SETTINGS=$(
     echo "sample_tag=$SAMPLE_TAG"
     echo "rate_thresholds=$RATE_TEXT sha1=$RATE_SHA1"
-    echo "max_aux_adc=$MAX_AUX_ADC"
+    # one line when the limits are equal: the snapshot of the samples made
+    # with the single limit, which are then reused without --force
+    if [[ $MAX_NOISE_ADC == "$MAX_POST_ADC" ]]; then
+        echo "max_aux_adc=$MAX_NOISE_ADC"
+    else
+        echo "max_noise_adc=$MAX_NOISE_ADC max_post_adc=$MAX_POST_ADC"
+    fi
     echo "max_full_range_adc=$MAX_FULL_RANGE_ADC"
     if [[ $MODE == single ]]; then
         echo "mode=single channels=$CHANNELS"
@@ -562,7 +580,8 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^
                 --output-dir "$SELECT_DIR" \
                 --tag "$SAMPLE_TAG" --run "$run" \
                 "${single_args[@]}" \
-                --max-auxiliary-amplitude "$MAX_AUX_ADC" \
+                --max-noise-amplitude "$MAX_NOISE_ADC" \
+                --max-post-signal-amplitude "$MAX_POST_ADC" \
                 --max-full-range-amplitude "$MAX_FULL_RANGE_ADC" \
                 ${rate_args[@]+"${rate_args[@]}"} \
                 "$input"
@@ -577,7 +596,8 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^
                 --output-dir "$SELECT_DIR" \
                 --csv "$csv" \
                 --tag "$SAMPLE_TAG" \
-                --max-auxiliary-amplitude "$MAX_AUX_ADC" \
+                --max-noise-amplitude "$MAX_NOISE_ADC" \
+                --max-post-signal-amplitude "$MAX_POST_ADC" \
                 --max-full-range-amplitude "$MAX_FULL_RANGE_ADC" \
                 "$input"
         fi

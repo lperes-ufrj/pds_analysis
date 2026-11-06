@@ -665,7 +665,8 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     unsigned int channel,
     double baseline,
     const WaveformAnalyzer &analyzer,
-    double max_auxiliary_amplitude,
+    double max_noise_amplitude,
+    double max_post_signal_amplitude,
     double max_full_range_amplitude
 )
 {
@@ -678,8 +679,8 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     const double post_signal_amplitude = maximumAbsoluteAmplitudeInRegion(
     adc, analyzer, channel, "post_signal", baseline
     );
-    const bool fails_noise = noise_amplitude > max_auxiliary_amplitude;
-    const bool fails_post_signal = post_signal_amplitude > max_auxiliary_amplitude;
+    const bool fails_noise = noise_amplitude > max_noise_amplitude;
+    const bool fails_post_signal = post_signal_amplitude > max_post_signal_amplitude;
     const double amplitude = fullRangeAmplitude(adc, baseline);
     const bool fails_full_range_amplitude = amplitude > max_full_range_amplitude;
     const PeakSearchResult peak = analyzer.findPeak(adc, channel);

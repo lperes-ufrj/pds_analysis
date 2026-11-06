@@ -33,7 +33,7 @@ E = 0 peak.
 | Name | What it is | Example | Names |
 |---|---|---|---|
 | cut set | the recipe: file `cutsets/NAME.env` | `workflow_fast` | fit folder `$PDS_OUTPUT/pipeline/NAME/RUNSET/`, legends of `compare_cutsets.py` |
-| sample tag | the data the recipe selects, every choice spelled out | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_aux500_full10000` | `coincidence/selected_waveforms/TAG/` |
+| sample tag | the data the recipe selects, every choice spelled out | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_noise500_post2000_full10000` | `coincidence/selected_waveforms/TAG/` |
 | coincidence tag | the sample tag without the waveform cuts | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV` | `coincidence/saved_coincidences/TAG/` |
 
 `pipeline/run_pipeline.sh NAME --print-tag` prints the sample tag
@@ -54,7 +54,8 @@ Reading a tag, part by part:
 | `n` | `MAX_WAVEFORMS` | `n5000` | `no_coinc`, only when not 0 (all) |
 | `r` | `RATE_THRESHOLDS` | `r292kV`, `rnone` | rate-threshold folder (`RateAnalysis_data_` dropped), or no rate cut |
 | `iv-` | `INTERVALS` | `iv-xe` | only for a file other than `coincidence/waveform_intervals.ini` (`waveform_intervals_` dropped) |
-| `aux` | `MAX_AUX_ADC` | `aux500` | noise and post-signal limit [ADC] |
+| `noise`, `post` | `MAX_NOISE_ADC`, `MAX_POST_ADC` | `noise500_post2000` | noise-region and post-signal limits [ADC] |
+| `aux` | `MAX_NOISE_ADC` = `MAX_POST_ADC` | `aux500` | both limits, when equal (the tag of the single `MAX_AUX_ADC` they replaced, so those samples keep their folders) |
 | `full` | `MAX_FULL_RANGE_ADC` | `full10000` | full-waveform limit [ADC] |
 | `peak` | `REQUIRE_PEAK` | `peak` | `no_coinc`, only when 1 |
 
@@ -86,7 +87,8 @@ with the same choices share them. Copy
 | `MIN_AMPLITUDE_ADC` | coincidence | minimum amplitude on the trigger channels |
 | `RATE_THRESHOLDS` | coincidence | rate-equalization threshold folder; empty = no rate cut |
 | `INTERVALS` | both | INI with the per-channel windows and an optional `[peak_finder]` section |
-| `MAX_AUX_ADC` | selection | noise and post-signal amplitude limit |
+| `MAX_NOISE_ADC` | selection | noise-region amplitude limit |
+| `MAX_POST_ADC` | selection | post-signal amplitude limit |
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; their channels must be saved (`default_coinc` → M7 M8, `inverse_coinc` → M5 M6) |
 | `TEMPLATES` | fit | detector response: `large_pulse` (default), `francesca` or `lucca`, see below |
@@ -128,7 +130,7 @@ copy `workflow_fast.env` to, say, `nocoinc_fast.env`, set `TRIGGER=no_coinc`
 and `CHANNELS="2080 2081"`, and compare:
 
 ```bash
-pipeline/run_pipeline.sh nocoinc_fast       # sample no_coinc_save_M8_r292kV_aux500_full10000
+pipeline/run_pipeline.sh nocoinc_fast       # sample no_coinc_save_M8_r292kV_noise500_post2000_full10000
 python3 pipeline/compare_cutsets.py workflow_fast nocoinc_fast
 ```
 
@@ -137,7 +139,7 @@ python3 pipeline/compare_cutsets.py workflow_fast nocoinc_fast
 | `CHANNELS` | channel numbers and/or `all`, `cathode`, `membrane` (expanded from the `[channel_NNNN]` sections of `INTERVALS`) |
 | `MODULES` | modules to fit (M1-M8, C1-C8), each needing its channels in `CHANNELS`; may be empty: selection only, the cut flow is still copied for `compare_cutsets.py` |
 | `RATE_THRESHOLDS` | same rate-equalization amplitude cut that `run_coincidence` applies to saved channels; empty = none |
-| `INTERVALS`, `MAX_AUX_ADC`, `MAX_FULL_RANGE_ADC` | as in coincidence mode |
+| `INTERVALS`, `MAX_NOISE_ADC`, `MAX_POST_ADC`, `MAX_FULL_RANGE_ADC` | as in coincidence mode |
 | `REQUIRE_PEAK` | `1` also rejects waveforms without a significant peak (default `0`, as in `plot_wfs_coincidence`) |
 | `MAX_WAVEFORMS` | per channel and run, after the rate cut, in file order; `0` = all (default) |
 | `CHANNELS_PER_PASS` | channels held in memory at once, one pass over the input per group (default 4; `0` = all) |

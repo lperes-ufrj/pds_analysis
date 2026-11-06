@@ -106,7 +106,8 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     unsigned int channel,
     double baseline,
     const WaveformAnalyzer &analyzer,
-    double max_auxiliary_amplitude,
+    double max_noise_amplitude,
+    double max_post_signal_amplitude,
     double max_full_range_amplitude
 );
 

@@ -33,7 +33,8 @@ using waveform_plotting::RecordsByChannel;
 using waveform_plotting::plotAllWaveformsForSelection;
 using waveform_plotting::plotAndSaveStatistics;
 
-constexpr double DEFAULT_MAX_AUXILIARY_AMPLITUDE = 500.0;
+constexpr double DEFAULT_MAX_NOISE_AMPLITUDE = 500.0;
+constexpr double DEFAULT_MAX_POST_SIGNAL_AMPLITUDE = 500.0;
 constexpr double DEFAULT_MAX_FULL_RANGE_AMPLITUDE = 10000.0;
 
 struct Options {
@@ -42,7 +43,8 @@ struct Options {
     fs::path output_dir;
     fs::path csv_file;
     std::string tag;
-    double max_auxiliary_amplitude = DEFAULT_MAX_AUXILIARY_AMPLITUDE;
+    double max_noise_amplitude = DEFAULT_MAX_NOISE_AMPLITUDE;
+    double max_post_signal_amplitude = DEFAULT_MAX_POST_SIGNAL_AMPLITUDE;
     double max_full_range_amplitude = DEFAULT_MAX_FULL_RANGE_AMPLITUDE;
 };
 
@@ -152,7 +154,9 @@ void printUsage(const char *program)
         << "  --tag TAG                    Label suffix of the outputs (default: the\n"
         << "                               CSV's TIMESTAMP), as in\n"
         << "                               selection_cuts_coincidence_scan_run_RUN_TAG.txt\n"
-        << "  --max-auxiliary-amplitude N  Noise/post-signal limit in ADC (default: 500)\n"
+        << "  --max-noise-amplitude N      Noise-region limit in ADC (default: 500)\n"
+        << "  --max-post-signal-amplitude N Post-signal limit in ADC (default: 500)\n"
+        << "  --max-auxiliary-amplitude N  Sets both limits above\n"
         << "  --max-full-range-amplitude N Full-waveform amplitude limit in ADC (default: 10000)\n"
         << "  -h, --help                    Show this help\n";
 }
@@ -172,6 +176,8 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
         if (argument == "--config" || argument == "--output-dir"
             || argument == "--csv" || argument == "--tag"
             || argument == "--max-auxiliary-amplitude"
+            || argument == "--max-noise-amplitude"
+            || argument == "--max-post-signal-amplitude"
             || argument == "--max-full-range-amplitude") {
             if (++index >= argc) throw std::runtime_error("Missing value for " + argument);
             if (argument == "--config") options.config = argv[index];
@@ -179,7 +185,12 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
             else if (argument == "--csv") options.csv_file = argv[index];
             else if (argument == "--tag") options.tag = argv[index];
             else if (argument == "--max-auxiliary-amplitude") {
-                options.max_auxiliary_amplitude = std::stod(argv[index]);
+                options.max_noise_amplitude = std::stod(argv[index]);
+                options.max_post_signal_amplitude = options.max_noise_amplitude;
+            } else if (argument == "--max-noise-amplitude") {
+                options.max_noise_amplitude = std::stod(argv[index]);
+            } else if (argument == "--max-post-signal-amplitude") {
+                options.max_post_signal_amplitude = std::stod(argv[index]);
             } else options.max_full_range_amplitude = std::stod(argv[index]);
             continue;
         }
@@ -212,10 +223,16 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
     options.csv_file = fs::absolute(options.csv_file);
     options.config = fs::absolute(options.config);
     options.output_dir = fs::absolute(options.output_dir);
-    if (!std::isfinite(options.max_auxiliary_amplitude)
-        || options.max_auxiliary_amplitude < 0.0) {
+    if (!std::isfinite(options.max_noise_amplitude)
+        || options.max_noise_amplitude < 0.0) {
         throw std::runtime_error(
-            "Maximum auxiliary amplitude must be a finite, non-negative value"
+            "Maximum noise-region amplitude must be a finite, non-negative value"
+        );
+    }
+    if (!std::isfinite(options.max_post_signal_amplitude)
+        || options.max_post_signal_amplitude < 0.0) {
+        throw std::runtime_error(
+            "Maximum post-signal amplitude must be a finite, non-negative value"
         );
     }
     if (!std::isfinite(options.max_full_range_amplitude)
@@ -380,7 +397,8 @@ WaveformSelections loadWaveforms(
     TChain &chain,
     const std::vector<LocatedWaveform> &located,
     const WaveformAnalyzer &analyzer,
-    double max_auxiliary_amplitude,
+    double max_noise_amplitude,
+    double max_post_signal_amplitude,
     double max_full_range_amplitude
 )
 {
@@ -412,7 +430,8 @@ WaveformSelections loadWaveforms(
             item.key.channel,
             baseline,
             analyzer,
-            max_auxiliary_amplitude,
+            max_noise_amplitude,
+            max_post_signal_amplitude,
             max_full_range_amplitude
         );
 
@@ -450,9 +469,9 @@ WaveformSelections loadWaveforms(
         << " selected waveforms\n"
         << "Rejected " << rejected_total
         << " waveforms in total (cut categories may overlap):\n"
-        << "  Noise-region amplitude above " << max_auxiliary_amplitude
+        << "  Noise-region amplitude above " << max_noise_amplitude
         << " ADC: " << rejected_noise << '\n'
-        << "  Post-signal amplitude above " << max_auxiliary_amplitude
+        << "  Post-signal amplitude above " << max_post_signal_amplitude
         << " ADC: " << rejected_post_signal << '\n'
         << "  Full-range amplitude above " << max_full_range_amplitude
         << " ADC over baseline: " << rejected_full_range_amplitude << '\n'
@@ -482,7 +501,8 @@ void writeCutSummary(
     const std::set<unsigned int> &channels,
     std::size_t selected_rows,
     std::size_t unique_located_waveforms,
-    double max_auxiliary_amplitude,
+    double max_noise_amplitude,
+    double max_post_signal_amplitude,
     double max_full_range_amplitude,
     const WaveformAnalyzer &analyzer,
     const CutStatistics &cuts,
@@ -508,9 +528,9 @@ void writeCutSummary(
            << "------------\n"
            << "Compatibility: coin_1p0v_code selection criteria and boundaries\n"
            << "1. Noise-region maximum ADC minus noise median <= "
-           << max_auxiliary_amplitude << " ADC\n"
+           << max_noise_amplitude << " ADC\n"
            << "2. Post-signal maximum ADC minus noise median <= "
-           << max_auxiliary_amplitude << " ADC\n"
+           << max_post_signal_amplitude << " ADC\n"
            << "3. Full-waveform positive amplitude above baseline <= "
            << max_full_range_amplitude << " ADC\n"
            << "4. Primary peak must be inside the configured signal region\n"
@@ -707,7 +727,8 @@ void processInputList(
     std::cout << "Located ROOT entries: " << located.size() << '\n';
     const WaveformAnalyzer analyzer(options.config.string());
     const auto selections = loadWaveforms(
-        *chain, located, analyzer, options.max_auxiliary_amplitude,
+        *chain, located, analyzer, options.max_noise_amplitude,
+        options.max_post_signal_amplitude,
         options.max_full_range_amplitude
     );
     // the pipeline names the selection by its sample tag, which extends the
@@ -727,7 +748,8 @@ void processInputList(
         channels,
         selected_rows,
         located.size(),
-        options.max_auxiliary_amplitude,
+        options.max_noise_amplitude,
+        options.max_post_signal_amplitude,
         options.max_full_range_amplitude,
         analyzer,
         selections.cuts,

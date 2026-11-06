@@ -18,11 +18,13 @@
 #   --print-tag          print the cut set's sample tag and exit
 #   --print WHAT         print and exit: tag (= --print-tag), coinc-tag,
 #                        legacy-tag (the old hashed tag, for migrate_tags.sh),
-#                        selection-settings, coinc-settings
+#                        selection-settings, coinc-settings, outputs (the
+#                        output folders as KEY=VALUE lines, for the
+#                        comparison scripts)
 #
 # Environment:
 #   PYTHON      interpreter for the fit and light yield (default: python3)
-#   PDS_OUTPUT  output root; fits go to $PDS_OUTPUT/pipeline/CUTSET/RUNSET/
+#   PDS_OUTPUT  output root; fits go to $PDS_OUTPUT/pipeline/SAMPLE_TAG/RUNSET/
 #
 # Tags: every sample choice of the cut set spelled out, so the folder name
 # says how the sample was made (no hash):
@@ -39,20 +41,26 @@
 # than the standard 10 ticks), _n<MAX_WAVEFORMS>, _iv-<INI name> (an
 # INTERVALS file other than coincidence/waveform_intervals.ini), _peak
 # (REQUIRE_PEAK=1). Fit-only choices (MODULES, TEMPLATES, LY_CHANNELS) and
-# RUN_SET are not in it: they do not change the sample, and the fit folder
-# is named by the cut set and run set.
+# RUN_SET are not in it: they do not change the sample. The fit and light
+# yield folders are named by the sample tag, the run set and, for the fit,
+# the template set, so every result traces back to its selection folder.
 #
 # Outputs:
 #   coincidence/saved_coincidences/COINC_TAG/   run_coincidence, shared by every
 #                                               cut set with the same coincidence
 #                                               choices (no_coinc: none)
 #   coincidence/selected_waveforms/SAMPLE_TAG/  cut flow, mean waveforms, fprompt
-#   $PDS_OUTPUT/pipeline/CUTSET/RUNSET/         fit plots, parameter tables and a
-#                                               copy of the cut flow it was fitted on
-#   $PDS_OUTPUT/pipeline/CUTSET/RUNSET/lightyield/
+#   $PDS_OUTPUT/pipeline/SAMPLE_TAG/RUNSET/fit_TEMPLATES/
+#                                               fit plots and parameter tables per
+#                                               module, and a copy of the cut flow
+#                                               it was fitted on
+#   $PDS_OUTPUT/pipeline/SAMPLE_TAG/RUNSET/lightyield/
 #                                               S/S0 vs field with the Birks fit
 #                                               (analysis/LY_vs_EF/fit_LY_wo_template.py)
 #                                               averaged over LY_CHANNELS
+# Cut sets giving the same sample tag share these folders: each module fit
+# and each LY_CHANNELS list is cached on its own, so they keep each other's
+# results.
 #
 # Each stage is cached per run with a .done_RUN marker, so a reduced pass
 # followed by a full pass only processes the runs that are new.
@@ -338,9 +346,11 @@ legacy_tag() {
 }
 
 # The tags in words. Two names run through every output:
-#   cut set (CUTSET)       the recipe: this .env file's name; names the fit folder
-#   sample tag (SAMPLE_TAG) the data the recipe selects: names the selection
-#                          folder (and, without the cuts, the coincidence folder)
+#   cut set (CUTSET)       the recipe: this .env file's name; recorded in the
+#                          fit folder's sample.txt and in the plot legends
+#   sample tag (SAMPLE_TAG) the data the recipe selects: names the selection,
+#                          fit and light-yield folders (and, without the cuts,
+#                          the coincidence folder)
 span() { set -- $1; [[ $# -gt 1 ]] && echo "$1..${!#}" || echo "$1"; }  # 2030 .. 2041 -> 2030..2041
 if [[ $MODE == coincidence ]]; then
     SAMPLE_DESCRIPTION="${TRIGGER%_coinc} coincidence: trigger $(modules_of "$LEFT") ($(span "$LEFT")) vs $(modules_of "$RIGHT") ($(span "$RIGHT")), saving $(modules_of "$SAVE") ($(span "$SAVE")), window $WINDOW_TICKS ticks, "
@@ -360,7 +370,11 @@ SAMPLE_DESCRIPTION+=", noise < $MAX_NOISE_ADC ADC, post-signal < $MAX_POST_ADC A
 COINC_DIR=$REPO_DIR/coincidence/saved_coincidences/$COINC_TAG
 SELECT_DIR=$REPO_DIR/coincidence/selected_waveforms/$SAMPLE_TAG
 OUTPUT_ROOT=${PDS_OUTPUT:-$REPO_DIR/output}
-FIT_DIR=$OUTPUT_ROOT/pipeline/$CUTSET/$RUN_SET
+# the fit and light yield of this sample and run set; the fit depends on the
+# template set too, the light yield does not
+RESULT_DIR=$OUTPUT_ROOT/pipeline/$SAMPLE_TAG/$RUN_SET
+FIT_DIR=$RESULT_DIR/fit_$TEMPLATES
+LY_DIR=$RESULT_DIR/lightyield
 
 # Settings snapshots: what a folder was made from, including the contents of
 # the threshold and intervals files, which the tags only name. A folder made
@@ -393,13 +407,13 @@ SELECTION_SETTINGS=$(
 )
 
 case $PRINT in
-    "") ;;
+    ""|outputs) ;;  # outputs: after the light-yield channels, below
     tag)                echo "$SAMPLE_TAG"; exit 0 ;;
     coinc-tag)          echo "$COINC_TAG"; exit 0 ;;
     legacy-tag)         legacy_tag; exit 0 ;;
     selection-settings) printf '%s\n' "$SELECTION_SETTINGS"; exit 0 ;;
     coinc-settings)     [[ $MODE == coincidence ]] && printf '%s\n' "$COINC_SETTINGS"; exit 0 ;;
-    *) die "--print takes tag, coinc-tag, legacy-tag, selection-settings or coinc-settings" ;;
+    *) die "--print takes tag, coinc-tag, legacy-tag, selection-settings, coinc-settings or outputs" ;;
 esac
 
 mapfile -t RUN_LINES < <(cd "$REPO_DIR" && "$PYTHON" -m pds.runs "$RUN_SET")
@@ -444,7 +458,15 @@ elif [[ -n $MODULES ]]; then
 else
     LY_CHANNELS=$SELECTED_CHANNELS
 fi
-LY_DIR=$FIT_DIR/lightyield
+# light-yield results are named by their channel list (2080 2081 -> chs_2080_2081)
+LY_LABEL=chs_${LY_CHANNELS// /_}
+
+if [[ $PRINT == outputs ]]; then
+    printf '%s\n' "cutset=$CUTSET" "tag=$SAMPLE_TAG" "run_set=$RUN_SET" \
+        "templates=$TEMPLATES" "modules=$MODULES" "selection_dir=$SELECT_DIR" \
+        "fit_dir=$FIT_DIR" "lightyield_dir=$LY_DIR" "lightyield_channels=$LY_CHANNELS"
+    exit 0
+fi
 
 run_cmd() {
     printf '+'; printf ' %q' "$@"; printf '\n'
@@ -478,7 +500,8 @@ Stages                  : $STAGES${FORCE:+   (forced: $FORCE)}
 Fit                     : ${MODULES:-none}  (templates: $TEMPLATES)
 Light yield channels    : $LY_CHANNELS
 Selection folder (tag)  : $SELECT_DIR
-Fit folder (cut set)    : $FIT_DIR
+Fit folder (tag)        : $FIT_DIR
+Light-yield folder (tag): $LY_DIR
 ============================================================
 EOF
 
@@ -616,10 +639,9 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^
 fi
 
 # ------------------------------------------- shared by the fit and light yield
-# A stage reading the selection is current when its MARKER holds the same
-# settings (KEY, which starts with the sample tag: the fit folder is named by
-# the cut set, so it is reused when the cut set's tag changes) and is newer
-# than the last selection change and every selected run of this run set.
+# A result reading the selection is current when its MARKER holds the same
+# settings (KEY) and is newer than the last selection change and every
+# selected run of this run set.
 is_current() {  # MARKER KEY
     [[ -f $1 && $(cat "$1") == "$2" ]] || return 1
     [[ $1 -nt $SELECT_DIR/pipeline_selection_settings.txt ]] || return 1
@@ -640,12 +662,23 @@ require_own_selection() {  # STAGE
 }
 
 # ---------------------------------------------------------------- stage 3
-FIT_KEY="sample=$SAMPLE_TAG modules=$MODULES templates=$TEMPLATES"
+# FIT_DIR is shared by the cut sets giving this sample tag, run set and
+# template set. Each module is cached on its own (plots_bertolini_avg/MODULE/
+# .done), so a cut set fitting other modules keeps the fits already there;
+# FIT_DIR/.done marks the cut-flow copy, made with the last fit.
+FIT_KEY="sample=$SAMPLE_TAG templates=$TEMPLATES"
+module_marker() { echo "$FIT_DIR/plots_bertolini_avg/$1/.done"; }
 if has "$STAGES" fit; then
-    if ! ((DRY_RUN)) && ! has "$FORCE" fit \
-        && is_current "$FIT_DIR/.done" "$FIT_KEY"; then
-        echo "[cached] fit  ($FIT_DIR)"
-    else
+    to_fit=
+    for module in $MODULES; do
+        if ! ((DRY_RUN)) && ! has "$FORCE" fit \
+            && is_current "$(module_marker "$module")" "$FIT_KEY module=$module"; then
+            echo "[cached] fit  $module  ($FIT_DIR)"
+        else
+            to_fit+=" $module"
+        fi
+    done
+    if [[ -n $to_fit ]] || has "$FORCE" fit || ! is_current "$FIT_DIR/.done" "$FIT_KEY"; then
         if ! ((DRY_RUN)); then
             require_own_selection fit
             settings_file=$SELECT_DIR/pipeline_selection_settings.txt
@@ -654,49 +687,66 @@ if has "$STAGES" fit; then
             printf 'cut set    : %s\nsample tag : %s\n           = %s\nselection  : %s\nfit        : %s (templates %s), run set %s\n' \
                 "$CUTSET" "$SAMPLE_TAG" "$SAMPLE_DESCRIPTION" "$SELECT_DIR" \
                 "${MODULES:-none}" "$TEMPLATES" "$RUN_SET" > "$FIT_DIR/sample.txt"
-            # the cut flow this fit was made on: the selection folder may later
-            # be replaced (--force selection) after this fit
-            # (emptied first: a previous fit of this cut set may have been on
-            # another sample tag)
+            # the cut flow these fits are made on: the selection folder may
+            # later be replaced (--force selection)
             rm -f "$FIT_DIR/.done" "$FIT_DIR"/selection/*
-            # and fits of modules no longer in MODULES must not look current
-            rm -rf "$FIT_DIR/plots_bertolini_avg"
             cp "$settings_file" "$SELECT_DIR"/selection_cuts_*.txt "$FIT_DIR/selection/"
+            # fits made on another selection than this copy, and the ones to
+            # redo, go
+            for dir in "$FIT_DIR"/plots_bertolini_avg/*/; do
+                [[ -d $dir ]] || continue
+                module=$(basename "$dir")
+                if [[ " $to_fit " == *" $module "* ]] \
+                    || ! is_current "$dir.done" "$FIT_KEY module=$module"; then
+                    rm -rf "$dir"
+                fi
+            done
+            echo "$FIT_KEY" > "$FIT_DIR/.done"
         fi
-        [[ -n $MODULES ]] || echo "[skip] fit: MODULES is empty (cut flow copied to $FIT_DIR/selection)"
-        # a failing module does not stop the others; the stage still fails
-        # (no .done) so the next run retries
-        failed=
-        for module in $MODULES; do
-            echo "---- fit  $module"
-            run_cmd "$PYTHON" "$REPO_DIR/fit/waveform_fits/fitting_bertolini_avg.py" \
-                "$module" --batch \
-                --selection-dir "$SELECT_DIR" \
-                --coinc-tag "$SAMPLE_TAG" \
-                --run-set "$RUN_SET" \
-                --templates "$TEMPLATES" \
-                --cutset "$CUTSET" \
-                --out-dir "$FIT_DIR" || failed+=" $module"
-        done
-        [[ -z $failed ]] || die "fit failed for module(s)$failed (the others are in $FIT_DIR)"
-        ((DRY_RUN)) || echo "$FIT_KEY" > "$FIT_DIR/.done"
     fi
+    [[ -n $MODULES ]] || echo "[skip] fit: MODULES is empty (cut flow copied to $FIT_DIR/selection)"
+    # a failing module does not stop the others; the stage still fails and
+    # the module has no marker, so the next run retries it
+    failed=
+    for module in $to_fit; do
+        echo "---- fit  $module"
+        if run_cmd "$PYTHON" "$REPO_DIR/fit/waveform_fits/fitting_bertolini_avg.py" \
+            "$module" --batch \
+            --selection-dir "$SELECT_DIR" \
+            --coinc-tag "$SAMPLE_TAG" \
+            --run-set "$RUN_SET" \
+            --templates "$TEMPLATES" \
+            --cutset "$CUTSET" \
+            --out-dir "$FIT_DIR"; then
+            if ! ((DRY_RUN)); then
+                mkdir -p "$FIT_DIR/plots_bertolini_avg/$module"
+                echo "$FIT_KEY module=$module" > "$(module_marker "$module")"
+            fi
+        else
+            failed+=" $module"
+        fi
+    done
+    [[ -z $failed ]] || die "fit failed for module(s)$failed (the others are in $FIT_DIR)"
 fi
 
 # ---------------------------------------------------------------- stage 4
 # S/S0 vs field from the integral of the mean waveforms of LY_CHANNELS (the
 # selection's channel_<ch>_*.csv), normalized to 0 kV, with a Birks fit.
+# LY_DIR is shared by the cut sets giving this sample tag and run set; each
+# channel list has its own files and marker (.done_chs_2080_2081).
 LY_KEY="sample=$SAMPLE_TAG channels=$LY_CHANNELS"
+LY_MARKER=$LY_DIR/.done_$LY_LABEL
 if has "$STAGES" lightyield; then
     if ! ((DRY_RUN)) && ! has "$FORCE" lightyield \
-        && is_current "$LY_DIR/.done" "$LY_KEY"; then
-        echo "[cached] lightyield  ($LY_DIR)"
+        && is_current "$LY_MARKER" "$LY_KEY"; then
+        echo "[cached] lightyield  $LY_CHANNELS  ($LY_DIR)"
     else
         if ! ((DRY_RUN)); then
             require_own_selection lightyield
             mkdir -p "$LY_DIR"
-            # results of a previous sample tag or channel list go
-            rm -f "$LY_DIR/.done" "$LY_DIR"/fit_LY_wo_template_chs_*
+            # the previous tables of this channel list go (time-stamped names:
+            # fit_LY_wo_template_chs_2080_2081_YYYYMMDD_HHMMSS.{png,txt})
+            rm -f "$LY_MARKER" "$LY_DIR/fit_LY_wo_template_${LY_LABEL}_"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9].{png,txt}
         fi
         echo "---- lightyield  channels $LY_CHANNELS"
         # shellcheck disable=SC2086
@@ -707,7 +757,7 @@ if has "$STAGES" lightyield; then
             --channels $LY_CHANNELS \
             --out "$LY_DIR" \
             || die "light yield failed (channels $LY_CHANNELS; each needs its 0 kV run 039510)"
-        ((DRY_RUN)) || echo "$LY_KEY" > "$LY_DIR/.done"
+        ((DRY_RUN)) || echo "$LY_KEY" > "$LY_MARKER"
     fi
 fi
 
@@ -717,7 +767,7 @@ Done: cut set $CUTSET on sample $SAMPLE_TAG, run set $RUN_SET.
   cut flow per run : $SELECT_DIR/selection_cuts_*.txt
   mean waveforms   : $SELECT_DIR/mean_median_waveforms_*.png
   fit parameters   : $FIT_DIR/plots_bertolini_avg/<module>/parameters/
-  light yield      : $LY_DIR/fit_LY_wo_template_chs_*.{png,txt}
+  light yield      : $LY_DIR/fit_LY_wo_template_${LY_LABEL}_*.{png,txt}
 Compare cut sets:
   $PYTHON pipeline/compare_cutsets.py --runs $RUN_SET $CUTSET OTHER_CUTSET ...
 EOF

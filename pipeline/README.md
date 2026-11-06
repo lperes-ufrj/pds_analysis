@@ -21,7 +21,7 @@ To compare workflows, fits and light yields included, see
 With the same settings both share one sample, so `workflow_all` only
 processes the 15 runs `workflow_fast` did not. `--runs reduced|full`
 overrides the file's `RUN_SET`. To try other choices, copy one of them to a
-new name (the name labels the fits and plots) and edit it.
+new name (the name labels the plots) and edit it.
 
 The run sets live in [`pds/runs.py`](../pds/runs.py) (`REDUCED_FIELDS`,
 `FIT_SCAN`). The reduced set has 4 fields at ≤ 40 kV, where most field
@@ -32,15 +32,18 @@ E = 0 peak.
 
 | Name | What it is | Example | Names |
 |---|---|---|---|
-| cut set | the recipe: file `cutsets/NAME.env` | `workflow_fast` | fit folder `$PDS_OUTPUT/pipeline/NAME/RUNSET/`, legends of `compare_cutsets.py` |
-| sample tag | the data the recipe selects, every choice spelled out | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_noise500_post2000_full10000` | `coincidence/selected_waveforms/TAG/` |
+| cut set | the recipe: file `cutsets/NAME.env` | `workflow_fast` | legends of `compare_cutsets.py` and the light-yield plot; recorded in the fit folder's `sample.txt` |
+| sample tag | the data the recipe selects, every choice spelled out | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_noise500_post2000_full10000` | `coincidence/selected_waveforms/TAG/`, and the fit and light yield made on it, `$PDS_OUTPUT/pipeline/TAG/RUNSET/` |
 | coincidence tag | the sample tag without the waveform cuts | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV` | `coincidence/saved_coincidences/TAG/` |
 
 `pipeline/run_pipeline.sh NAME --print-tag` prints the sample tag
-(`--print coinc-tag` the coincidence tag). Every run prints both names with
+(`--print coinc-tag` the coincidence tag, `--print outputs` every output
+folder of the cut set). Every run prints both names with
 the tag in words, and writes them to `sample.txt` in the selection and fit
-folders. The light-yield script and `compare_cutsets.py` label each sample
-`cut set [tag]`.
+folders. The light-yield script labels each sample `cut set [tag]`;
+`compare_cutsets.py` labels each fit `cut set, templates SET [tag]`, names
+the template sets in the figure title and draws each set with its own line
+style.
 
 Reading a tag, part by part:
 
@@ -179,13 +182,22 @@ Caveats:
   stays. Only edits to the contents of the threshold or intervals file, which
   the tag cannot show, are refused until `--force coincidence` /
   `--force selection` (the fit and light yield follow automatically).
-- The fit and light yield go to `$PDS_OUTPUT/pipeline/CUTSET/RUN_SET/`,
-  named by the cut set, not the tag: one result per cut set and run set.
-  They rerun by themselves when the cut set's sample tag changed, when the
-  selection changed or gained runs, or when `MODULES`/`TEMPLATES` (fit) or
-  `LY_CHANNELS` (light yield) changed, and a rerun first clears the previous
-  results (cut-flow copy, module fits, light-yield tables). To keep the
-  results of two variations side by side, give each its own cut-set file.
+- The fit and light yield are named by the sample tag, like the selection,
+  so every result traces back to `coincidence/selected_waveforms/TAG/`:
+  the fit goes to `$PDS_OUTPUT/pipeline/TAG/RUN_SET/fit_TEMPLATES/` (it also
+  depends on the template set), the light yield to
+  `$PDS_OUTPUT/pipeline/TAG/RUN_SET/lightyield/`. Editing a cut set's
+  waveform cuts therefore gives new fit folders too; the old ones stay.
+- Cut sets giving the same tag share these folders. Each module fit
+  (`plots_bertolini_avg/MODULE/.done`) and each `LY_CHANNELS` list
+  (`lightyield/.done_chs_2080_2081`) is cached on its own, so a cut set
+  fitting other modules or averaging other channels adds its results next
+  to the others instead of replacing them. A result reruns by itself when
+  the selection changed or gained runs; fits made on an older selection are
+  cleared when the cut flow is copied again.
+- Results of the previous layout, `$PDS_OUTPUT/pipeline/CUTSET/RUN_SET/`,
+  move to the tag folders with `pipeline/migrate_fit_folders.sh` (try
+  `--dry-run` first). Nothing is refitted: the markers are converted.
 - `--force coincidence,selection,fit,lightyield` redoes any stage; `--stages` runs a subset;
   `--dry-run` prints the commands.
 
@@ -199,10 +211,10 @@ Caveats:
 | `coincidence/selected_waveforms/TAG/channel_<ch>_*.csv` | mean waveform per channel and run |
 | `coincidence/selected_waveforms/TAG/fprompt_*.csv` | one row per final-selection waveform, see below |
 | `coincidence/selected_waveforms/TAG/all_waveforms_*_{from_coincidence,before_cuts,final_selection}.png` | waveform density before and after the cuts |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/plots_bertolini_avg/MODULE/` | fit plots and `parameters/*.txt` |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/selection/` | cut flow the fit was made on |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/sample.txt` | cut set, sample tag spelled out, templates |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/lightyield/fit_LY_wo_template_chs_*.{png,txt}` | S/S0 vs field, Birks fit, and the numbers behind the figure |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/plots_bertolini_avg/MODULE/` | fit plots and `parameters/*.txt` |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/selection/` | cut flow the fit was made on |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/sample.txt`, `cutset.env` | sample tag spelled out, selection folder, templates; the cut set of the last fit and a copy of it |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/lightyield/fit_LY_wo_template_chs_*.{png,txt}` | S/S0 vs field, Birks fit, and the numbers behind the figure, per channel list |
 | `$PDS_OUTPUT/pipeline/compare/RUNSET/` | `compare_cutsets.py` figures and efficiency table |
 
 `fprompt_<ch>_<label>.csv` columns, one row per waveform that passed the cuts

@@ -9,20 +9,25 @@ Usage:
     tag, whether to include the fit made on it (y/n, a = all the rest,
     q = stop asking); selections without a fit are listed, not offered.
 
-    WORKFLOW   a cut-set name, i.e. a folder $PDS_OUTPUT/pipeline/WORKFLOW/
-               filled by pipeline/run_pipeline.sh. Its run set is the one
-               after ':' (workflow_fast:full), else RUN_SET of its cut-set
-               file, else the only run-set folder it has.
+    WORKFLOW   a cut-set name (pipeline/cutsets/NAME.env), read from the
+               folders pipeline/run_pipeline.sh names for its sample tag:
+               $PDS_OUTPUT/pipeline/TAG/RUNSET/{fit_TEMPLATES,lightyield}/.
+               Its run set is the one after ':' (workflow_fast:full), else
+               RUN_SET of its cut-set file. Or the path of a fit folder
+               $PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/.
                The first workflow is the reference of the ratio panels.
     --modules  modules to compare (default: every fitted module)
     --name     output folder name (default: the workflows joined by _vs_)
     --out      output folder (default $PDS_OUTPUT/analysis/comparison/NAME/)
 
-Reads, per workflow ($PDS_OUTPUT/pipeline/WORKFLOW/RUNSET/):
-    cutset.env, sample.txt                      settings at fit time, sample tag
-    selection/selection_cuts_*.txt              cut flow -> selection efficiency
-    plots_bertolini_avg/MODULE/parameters/      fit parameters and integrals
+Reads, per workflow ($PDS_OUTPUT/pipeline/TAG/RUNSET/):
+    fit_TEMPLATES/cutset.env, sample.txt        settings at fit time, sample tag
+    fit_TEMPLATES/selection/selection_cuts_*.txt
+                                                cut flow -> selection efficiency
+    fit_TEMPLATES/plots_bertolini_avg/MODULE/parameters/
+                                                fit parameters and integrals
     lightyield/fit_LY_wo_template_chs_*.txt     newest S/S0 table and Birks fit
+                                                (of the cut set's LY_CHANNELS)
 Writes:
     summary.txt         settings that differ, sample tags, efficiency, tau_s,
                         Birks parameters and S/S0 per field
@@ -65,52 +70,52 @@ BIRKS_RE = re.compile(r"B_1 = (\S+) \+- (\S+), k = (\S+) \+- (\S+), chi2/ndof = 
 
 class Workflow:
     def __init__(self, spec):
-        self.name, _, runs = spec.partition(":")
-        self.base = PIPELINE_DIR / self.name
-        if not self.base.is_dir():
-            raise SystemExit(f"no pipeline output for workflow {self.name!r} in {PIPELINE_DIR}")
-        self.runs = runs or self._default_runs()
+        path = Path(spec)
+        if path.is_dir():  # a fit folder: pipeline/TAG/RUNSET/fit_TEMPLATES
+            self.dir = path.resolve()
+            self.name = cc.read_sample(self.dir, "cut set") or self.dir.parent.parent.name
+            self.runs = self.dir.parent.name
+            self.ly_channels = None  # any: the newest table
+            cutset_file = None
+        else:
+            name, _, runs = spec.partition(":")
+            if runs and runs not in RUN_SETS:
+                raise SystemExit(f"{spec}: run set must be one of {', '.join(RUN_SETS)}")
+            outputs = cc.cutset_outputs(name, runs or None)
+            self.dir = Path(outputs["fit_dir"])
+            self.name, self.runs = outputs["cutset"], outputs["run_set"]
+            self.ly_channels = outputs["lightyield_channels"]
+            cutset_file = Path(name) if Path(name).is_file() else (
+                REPO_DIR / "pipeline" / "cutsets" / f"{self.name}.env")
         if self.runs not in RUN_SETS:
-            raise SystemExit(f"{spec}: run set must be one of {', '.join(RUN_SETS)}")
-        self.dir = self.base / self.runs
-        if not self.dir.is_dir():
-            raise SystemExit(f"{spec}: {self.dir} does not exist; run the pipeline with this run set")
-        self.settings = self._settings()
-        self.tag = cc.sample_tag(self.name, self.runs) or "?"
+            raise SystemExit(f"{spec}: {self.dir} is not in a run-set folder ({', '.join(RUN_SETS)})")
+        self.ly_dir = self.dir.parent / "lightyield"
+        if not (self.dir.is_dir() or self.ly_dir.is_dir()):
+            raise SystemExit(f"{spec}: no fit or light yield in {self.dir.parent}; run the "
+                             f"pipeline's fit and lightyield stages with this run set")
+        self.templates = cc.templates(self.dir) or "?"
+        self.settings = self._settings(cutset_file)
+        self.tag = cc.sample_tag(self.dir) or self.dir.parent.parent.name
+        self.label = f"{self.name} ({self.runs}, {self.templates})"
 
-    def _default_runs(self):
-        cutset_file = REPO_DIR / "pipeline" / "cutsets" / f"{self.name}.env"
-        if cutset_file.is_file():
-            value = read_settings(cutset_file).get("RUN_SET")
-            if value:
-                return value
-        present = [d.name for d in self.base.iterdir() if d.name in RUN_SETS]
-        if len(present) == 1:
-            return present[0]
-        return "reduced"
-
-    def _settings(self):
+    def _settings(self, cutset_file):
         # the copy made at fit time describes these results; the cut-set file
         # may have been edited (or deleted) since
-        for path in (self.dir / "cutset.env",
-                     REPO_DIR / "pipeline" / "cutsets" / f"{self.name}.env"):
-            if path.is_file():
+        for path in (self.dir / "cutset.env", cutset_file):
+            if path and path.is_file():
                 return read_settings(path)
         return {}
 
-    @property
-    def label(self):
-        return f"{self.name} ({self.runs})"
-
 
 def scan_fits():
-    """{sample tag: ["CUTSET:RUNSET", ...]} of the fits in PIPELINE_DIR."""
+    """{sample tag: [fit folder, ...]} of the fits in PIPELINE_DIR."""
     fits = {}
-    for info in sorted(PIPELINE_DIR.glob("*/*/sample.txt")):
-        name, runs = info.parent.parent.name, info.parent.name
-        tag = cc.sample_tag(name, runs) if runs in RUN_SETS else None
+    for info in sorted(PIPELINE_DIR.glob("*/*/fit_*/sample.txt")):
+        if info.parent.parent.name not in RUN_SETS:
+            continue
+        tag = cc.sample_tag(info.parent)
         if tag:
-            fits.setdefault(tag, []).append(f"{name}:{runs}")
+            fits.setdefault(tag, []).append(str(info.parent))
     return fits
 
 
@@ -129,12 +134,15 @@ def ask_workflows():
     print("Answer y / n (default) / a = include all the rest / q = stop asking.\n")
     chosen, take_rest = [], False
     for i, (tag, spec) in enumerate(offered, 1):
-        name, _, runs = spec.partition(":")
+        fit_dir = Path(spec)
+        name = cc.read_sample(fit_dir, "cut set") or "?"
+        runs, templates = fit_dir.parent.name, re.sub(r"^fit_", "", fit_dir.name)
         if not take_rest:
             print(f"[{i}/{len(offered)}] {tag}")
             answer = ""
             while True:
-                answer = input(f"        fit {name} ({runs}). Include? [y/N/a/q] ").strip().lower()
+                answer = input(f"        fit {runs}, templates {templates}, last made by cut set {name}."
+                               " Include? [y/N/a/q] ").strip().lower()
                 if answer in ("", "y", "n", "a", "q"):
                     break
                 print("        please answer y, n, a or q")
@@ -154,7 +162,7 @@ def ask_workflows():
               " CUTSET --print tag)\n  and run its stages: --stages fit,lightyield")
     if not chosen:
         raise SystemExit("nothing chosen")
-    print("\nComparing: " + ", ".join(chosen) + "\n")
+    print("\nComparing:\n  " + "\n  ".join(chosen) + "\n")
     return chosen
 
 
@@ -175,9 +183,13 @@ def read_settings(path):
 
 
 def read_lightyield(workflow):
-    """Newest light-yield table of the workflow, or None:
+    """Newest light-yield table of the workflow (of its LY_CHANNELS when it is
+    a cut set: the folder may hold other channel lists), or None:
     {file, channels, birks: (B1, B1_err, k, k_err, chi2, ndof), efield, y, lo, up}."""
-    files = sorted((workflow.dir / "lightyield").glob("fit_LY_wo_template_chs_*.txt"),
+    channels = r"\d+(?:_\d+)*" if workflow.ly_channels is None else "_".join(workflow.ly_channels.split())
+    name_re = re.compile(rf"fit_LY_wo_template_chs_{channels}_\d{{8}}_\d{{6}}\.txt")
+    files = sorted((p for p in workflow.ly_dir.glob("fit_LY_wo_template_chs_*.txt")
+                    if name_re.fullmatch(p.name)),
                    key=lambda p: p.stat().st_mtime)
     if not files:
         return None
@@ -199,6 +211,26 @@ def style(i):
             "mec": "white", "mew": 0.8, "capsize": 2, "lw": 1.5}
 
 
+def column_width(workflows, minimum=24):
+    """Table columns are headed by the labels (cut set, run set, templates)."""
+    return max([minimum] + [len(w.label) for w in workflows])
+
+
+def templates_lines(workflows):
+    """The template set of each fit, flagged when they differ."""
+    sets = list(dict.fromkeys(w.templates for w in workflows))
+    if len(sets) == 1:
+        return [f"== templates: {sets[0]} (every workflow)", ""]
+    width = max(len(w.label) for w in workflows)
+    lines = [f"== templates DIFFER: {' vs '.join(sets)} "
+             "(fit line styles: " + ", ".join(
+                 f"{t} {name}" for t, name in zip(sets, ["solid", "dashed", "dotted", "dash-dot"] * 2))
+             + ")"]
+    lines += [f"  {w.label:<{width}}  {w.templates}" for w in workflows]
+    lines.append("")
+    return lines
+
+
 def offset(x, i, n, step=0.006):
     """Small horizontal offset so overlapping points stay visible."""
     return np.asarray(x) * (1 + step * (i - (n - 1) / 2))
@@ -209,16 +241,18 @@ def settings_section(workflows):
     keys = sorted({k for w in workflows for k in w.settings})
     differing = [k for k in keys if len({w.settings.get(k, "-") for w in workflows}) > 1]
     lines = ["== workflows"]
+    width = column_width(workflows, 28)
     for w in workflows:
-        lines.append(f"  {w.label:<28} sample {w.tag}")
+        lines.append(f"  {w.label:<{width}} sample {w.tag}")
     lines.append("")
+    lines += templates_lines(workflows)
     if len(workflows) < 2:
         return lines
     lines.append("== settings that differ" if differing else "== settings: all equal")
     width = max([len(k) for k in differing] + [8])
     for k in differing:
         lines.append(f"  {k:<{width}}  " + "  |  ".join(
-            f"{w.name}: {w.settings.get(k, '(unset)') or '(empty)'}" for w in workflows))
+            f"{w.label}: {w.settings.get(k, '(unset)') or '(empty)'}" for w in workflows))
     same = [k for k in keys if k not in differing]
     if same and differing:
         lines.append(f"  (equal: {', '.join(same)})")
@@ -229,15 +263,17 @@ def settings_section(workflows):
 def efficiency_section(workflows):
     runs = [(kv, run) for kv, run in FIT_SCAN.items()
             if any(run in RUN_SETS[w.runs].values() for w in workflows)]
-    lines = ["== fraction of waveforms passing all waveform cuts (summed over saved channels)",
-             f"  {'HV_kV':>6} {'run':>7} " + " ".join(f"{w.name:>24}" for w in workflows)]
+    width = column_width(workflows)
+    lines = ["== fraction of waveforms passing all waveform cuts (summed over saved channels;"
+             " the templates do not change it)",
+             f"  {'HV_kV':>6} {'run':>7} " + " ".join(f"{w.label:>{width}}" for w in workflows)]
     for kv, run in runs:
         cells = []
         for w in workflows:
-            eff = cc.efficiency(w.name, w.runs, run) if run in RUN_SETS[w.runs].values() else None
+            eff = cc.efficiency(w.dir, run) if run in RUN_SETS[w.runs].values() else None
             cells.append("-" if eff is None or eff[1] == 0
                          else f"{eff[0] / eff[1]:.3f} ({eff[0]}/{eff[1]})")
-        lines.append(f"  {kv:>6} {run:>7} " + " ".join(f"{c:>24}" for c in cells))
+        lines.append(f"  {kv:>6} {run:>7} " + " ".join(f"{c:>{width}}" for c in cells))
     lines.append("")
     return lines
 
@@ -245,7 +281,7 @@ def efficiency_section(workflows):
 def fit_section(workflows, modules, out_dir):
     lines = []
     for module in modules:
-        tables = {i: cc.fit_tables(w.name, w.runs, module) for i, w in enumerate(workflows)}
+        tables = {i: cc.fit_tables(w.dir, module) for i, w in enumerate(workflows)}
         for i, t in tables.items():
             if t is None:
                 print(f"[missing] {module} fit of {workflows[i].label}")
@@ -253,19 +289,22 @@ def fit_section(workflows, modules, out_dir):
         if not tables:
             continue
 
+        fitted = [workflows[i] for i in tables]
+        linestyles = cc.template_linestyles(w.dir for w in fitted)
         fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
         for ax, (table, column, label) in zip(axes.flat, cc.PANELS):
             for i, t in tables.items():
                 df = t[table]
                 err = df[f"{column}_err"] if f"{column}_err" in df else None
                 ax.errorbar(offset(df["efield_kVcm"], i, len(workflows)), df[column],
-                            yerr=err, label=workflows[i].label, **style(i))
+                            yerr=err, label=workflows[i].label,
+                            ls=linestyles[workflows[i].templates], **style(i))
             ax.set_ylabel(label)
             ax.grid(alpha=0.3)
         for ax in axes[-1]:
             ax.set_xlabel("Electric field [kV/cm]")
         axes.flat[0].legend(fontsize=9)
-        fig.suptitle(f"{module}: workflow comparison")
+        fig.suptitle(f"{module}: workflow comparison ({cc.templates_title(w.dir for w in fitted)})")
         fig.tight_layout()
         path = out_dir / f"fit_{module}.png"
         fig.savefig(path, dpi=150)
@@ -273,8 +312,10 @@ def fit_section(workflows, modules, out_dir):
         print(f"figure: {path}")
 
         # tau_s per field, side by side
-        lines.append(f"== {module}: tau_slow [us] per field (valid = Minuit converged)")
-        lines.append(f"  {'HV_kV':>6} {'E_kVcm':>7} " + " ".join(f"{workflows[i].name:>24}" for i in tables))
+        width = column_width(fitted)
+        lines.append(f"== {module}: tau_slow [us] per field (valid = Minuit converged;"
+                     f" {cc.templates_title(w.dir for w in fitted)})")
+        lines.append(f"  {'HV_kV':>6} {'E_kVcm':>7} " + " ".join(f"{w.label:>{width}}" for w in fitted))
         fields = sorted({kv for t in tables.values() for kv in t["params"]["field_kV"]})
         for kv in fields:
             cells, efield = [], None
@@ -287,7 +328,7 @@ def fit_section(workflows, modules, out_dir):
                 efield = row["efield_kVcm"]
                 flag = "" if int(row["valid"]) else " !"
                 cells.append(f"{row['tau_slow']:.4f} +- {row['tau_slow_err']:.4f}{flag}")
-            lines.append(f"  {kv:>6g} {efield:>7.3f} " + " ".join(f"{c:>24}" for c in cells))
+            lines.append(f"  {kv:>6g} {efield:>7.3f} " + " ".join(f"{c:>{width}}" for c in cells))
         lines.append("")
     return lines
 
@@ -304,14 +345,18 @@ def lightyield_section(workflows, out_dir):
         return ["== light yield: none found", ""]
 
     lines = ["== light yield: Birks fit S/S0 = 1 - B_1 E/(E + k)"]
+    if len({workflows[i].templates for i in results}) > 1:
+        lines.append("  (no template enters the light yield, the integral of the mean waveforms:"
+                     " workflows that differ only in templates show the same points)")
+    width = column_width([workflows[i] for i in results], 28)
     for i, r in results.items():
         if r["birks"]:
             b1, b1e, k, ke, chi2, ndof = r["birks"]
             fit = f"B_1 = {b1:.4f} +- {b1e:.4f}, k = {k:.4f} +- {ke:.4f}, chi2/ndof = {chi2:.2f}/{int(ndof)}"
         else:
             fit = "no Birks fit in the table"
-        lines.append(f"  {workflows[i].label:<28} channels {r['channels']}: {fit}")
-        lines.append(f"  {'':<28} {r['file'].name}")
+        lines.append(f"  {workflows[i].label:<{width}} channels {r['channels']}: {fit}")
+        lines.append(f"  {'':<{width}} {r['file'].name}")
 
     ref_i = min(results)
     ref = results[ref_i]
@@ -367,14 +412,15 @@ def lightyield_section(workflows, out_dir):
     efields = sorted({round(float(e), 6) for r in results.values() for e in r["efield"]})
     lines.append("")
     lines.append("  S/S0 per field (-err/+err)")
-    lines.append(f"  {'E_kVcm':>7} " + " ".join(f"{workflows[i].name:>24}" for i in results))
+    width = column_width([workflows[i] for i in results])
+    lines.append(f"  {'E_kVcm':>7} " + " ".join(f"{workflows[i].label:>{width}}" for i in results))
     for e in efields:
         cells = []
         for r in results.values():
             j = np.flatnonzero(np.isclose(r["efield"], e))
             cells.append("-" if j.size == 0 else
                          f"{r['y'][j[0]]:.4f} -{r['lo'][j[0]]:.4f}/+{r['up'][j[0]]:.4f}")
-        lines.append(f"  {e:>7.3f} " + " ".join(f"{c:>24}" for c in cells))
+        lines.append(f"  {e:>7.3f} " + " ".join(f"{c:>{width}}" for c in cells))
     lines.append("")
     return lines
 
@@ -392,12 +438,11 @@ def main():
     workflows = [Workflow(spec) for spec in (args.workflows or ask_workflows())]
     if len(workflows) > len(COLORS):
         raise SystemExit(f"at most {len(COLORS)} workflows per comparison (one colour each)")
-    labels = [w.label for w in workflows]
-    if len(set(labels)) != len(labels):
-        raise SystemExit("the same workflow and run set is given twice")
+    if len({w.dir for w in workflows}) != len(workflows):
+        raise SystemExit("the same fit (workflow and run set) is given twice")
 
-    names = [w.name if [v.name for v in workflows].count(w.name) == 1 else f"{w.name}-{w.runs}"
-             for w in workflows]
+    names = [w.name if [v.name for v in workflows].count(w.name) == 1
+             else f"{w.name}-{w.runs}-{w.templates}" for w in workflows]
     name = args.name or "_vs_".join(names)
     if asked and not (args.name or args.out):
         name = input(f"Output folder name [{name}]: ").strip() or name

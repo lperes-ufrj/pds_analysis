@@ -26,7 +26,8 @@
 # says so); the old tag's hash already pins the rest. Fits in
 # $PDS_OUTPUT/pipeline/*/*/ made on a migrated sample get the new tag in
 # sample.txt, in their copy of the cut flow and in the .done markers of the
-# fit and light yield; they keep their cut-set folder name.
+# fit and light yield; they keep their cut-set folder name. Then move them
+# to the sample-tag folders with pipeline/migrate_fit_folders.sh.
 
 set -euo pipefail
 

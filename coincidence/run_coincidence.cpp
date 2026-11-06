@@ -38,6 +38,9 @@ struct Arguments {
     std::vector<unsigned int> right{2050, 2051, 2060, 2061};
     std::vector<unsigned int> save{2070, 2071, 2080, 2081};
     int window_ticks = 10;
+    // --min-amplitude-adc false: no amplitude cut, every waveform of the
+    // coincidence channels can form a coincidence
+    bool apply_min_amplitude = true;
     double min_amplitude_adc = 0.0;
     fs::path norm_rate_adc_threshold_file;
     std::string run;
@@ -110,6 +113,14 @@ std::string joinChannels(const std::vector<unsigned int> &channels, const char *
     return output.str();
 }
 
+std::string minAmplitudeText(const Arguments &args)
+{
+    if (!args.apply_min_amplitude) return "none (no amplitude cut)";
+    std::ostringstream output;
+    output << "> " << args.min_amplitude_adc << " ADC";
+    return output.str();
+}
+
 void printUsage(const char *program)
 {
     std::cout
@@ -120,7 +131,8 @@ void printUsage(const char *program)
         << "  --channels-coincident-right CH [CH ...]\n"
         << "  --channels-to-save CH [CH ...]\n"
         << "  --window-ticks N\n"
-        << "  --min-amplitude-adc X (default: 0)\n"
+        << "  --min-amplitude-adc X|false (default: 0; keeps amplitude > X;\n"
+        << "                      false = no amplitude cut)\n"
         << "  --timestamp ID (reuse one analysis identifier across multiple runs)\n"
         << "  --norm-rate-adc-threshold-file FILE"
         << " (optional per-channel pre-coincidence cut for saved channels)\n";
@@ -171,7 +183,21 @@ Arguments parseArguments(int argc, char **argv)
             if (++index >= argc) {
                 throw std::runtime_error("--min-amplitude-adc requires a value");
             }
-            args.min_amplitude_adc = std::stod(argv[index]);
+            const std::string value = argv[index];
+            args.apply_min_amplitude = value != "false";
+            if (args.apply_min_amplitude) {
+                std::size_t used = 0;
+                try {
+                    args.min_amplitude_adc = std::stod(value, &used);
+                } catch (const std::exception &) {
+                    used = 0;
+                }
+                if (used == 0 || used != value.size()) {
+                    throw std::runtime_error(
+                        "--min-amplitude-adc takes a number or 'false', got '" + value + "'"
+                    );
+                }
+            }
         } else if (option == "--norm-rate-adc-threshold-file"
                    || option == "--norm-rate-adc-threshold") {
             if (++index >= argc) {
@@ -334,8 +360,8 @@ void CreateTXTfile(
            << '\n'
            << "Coincidence window: " << args.window_ticks << " ticks ("
            << args.window_ticks * SAMPLE_PERIOD_NS << " ns)\n"
-           << "Minimum baseline-subtracted amplitude: > "
-           << args.min_amplitude_adc << " ADC\n"
+           << "Minimum baseline-subtracted amplitude: "
+           << minAmplitudeText(args) << '\n'
            << "Normalized-rate ADC-threshold file: "
            << (args.norm_rate_adc_threshold_file.empty()
                    ? std::string("none")
@@ -508,9 +534,9 @@ RunStatistics scanCoincidence(
             bool coincidence_eligible = false;
             if (coincidence_channels.count(channel) != 0) {
                 ++coincidence_waveforms_analyzed;
-                const double amplitude =
-                    analyzer.baselineAdjustedSignalAmplitude(*adc, channel);
-                coincidence_eligible = amplitude > args.min_amplitude_adc;
+                coincidence_eligible = !args.apply_min_amplitude
+                    || analyzer.baselineAdjustedSignalAmplitude(*adc, channel)
+                        > args.min_amplitude_adc;
                 if (coincidence_eligible) {
                     ++coincidence_waveforms_accepted;
                 } else {
@@ -561,8 +587,8 @@ RunStatistics scanCoincidence(
     std::cout << "Analyzed " << relevant_waveforms << " relevant waveforms; "
               << coincidence_waveforms_accepted << " of "
               << coincidence_waveforms_analyzed
-              << " coincidence-channel waveforms passed > "
-              << args.min_amplitude_adc << " ADC; "
+              << " coincidence-channel waveforms passed the minimum amplitude ("
+              << minAmplitudeText(args) << "); "
               << saved_channel_waveforms_accepted << " of "
               << saved_channel_waveforms_analyzed
               << " saved-channel waveforms passed their pre-coincidence cut"
@@ -779,8 +805,8 @@ int main(int argc, char **argv)
         std::cout << "Output file: " << output_file << '\n'
                   << "Input files: " << files.size() << '\n'
                   << "Entries: " << chain->GetEntries() << '\n'
-                  << "Minimum baseline-subtracted waveform amplitude: > "
-                  << args.min_amplitude_adc << " ADC\n"
+                  << "Minimum baseline-subtracted waveform amplitude: "
+                  << minAmplitudeText(args) << '\n'
                   << "Testing left channels [" << joinChannels(args.left, ", ")
                   << "] against right channels [" << joinChannels(args.right, ", ")
                   << "], saving channels ["

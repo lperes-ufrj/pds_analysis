@@ -50,7 +50,7 @@ Reading a tag, part by part:
 | `no_coinc` | `TRIGGER=no_coinc` | `no_coinc` | no coincidence |
 | `save_` | `TRIGGER` (or `SAVE_CHANNELS`), `CHANNELS` for `no_coinc` | `save_M7-M8`, `save_M1-2021`, `save_membrane` | the channels saved and analysed |
 | `w` | `WINDOW_TICKS` | `w20` | coincidence window [ticks], only when not the standard 10 |
-| `a` | `MIN_AMPLITUDE_ADC` | `a0` | minimum trigger amplitude [ADC] |
+| `a` | `MIN_AMPLITUDE_ADC` | `a0`, `anone` | minimum trigger amplitude [ADC], or no amplitude cut (`false`) |
 | `n` | `MAX_WAVEFORMS` | `n5000` | `no_coinc`, only when not 0 (all) |
 | `r` | `RATE_THRESHOLDS` | `r292kV`, `rnone` | rate-threshold folder (`RateAnalysis_data_` dropped), or no rate cut |
 | `iv-` | `INTERVALS` | `iv-xe` | only for a file other than `coincidence/waveform_intervals.ini` (`waveform_intervals_` dropped) |
@@ -84,7 +84,7 @@ with the same choices share them. Copy
 | `TRIGGER` | all | which sample, see the table below |
 | `LEFT_CHANNELS`, `RIGHT_CHANNELS`, `SAVE_CHANNELS` | coincidence | `custom_coinc` only: trigger channels and saved channels (numbers and/or `all`, `cathode`, `membrane`) |
 | `WINDOW_TICKS` | coincidence | coincidence window |
-| `MIN_AMPLITUDE_ADC` | coincidence | minimum amplitude on the trigger channels |
+| `MIN_AMPLITUDE_ADC` | coincidence | minimum amplitude on the trigger channels (keeps amplitude > value, so `0` still drops ≤ 0); `false` = no amplitude cut |
 | `RATE_THRESHOLDS` | coincidence | rate-equalization threshold folder; empty = no rate cut |
 | `INTERVALS` | both | INI with the per-channel windows and an optional `[peak_finder]` section |
 | `MAX_NOISE_ADC` | selection | noise-region amplitude limit |

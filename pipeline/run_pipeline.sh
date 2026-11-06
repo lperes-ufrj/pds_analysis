@@ -149,6 +149,8 @@ esac
 for var in $required INTERVALS MAX_NOISE_ADC MAX_POST_ADC MAX_FULL_RANGE_ADC; do
     [[ -n ${!var} ]] || die "$var is not set in $CUTSET_FILE (needed by TRIGGER=$TRIGGER)"
 done
+[[ $MODE == single || $MIN_AMPLITUDE_ADC == false || $MIN_AMPLITUDE_ADC =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    || die "MIN_AMPLITUDE_ADC must be a non-negative number or false (no amplitude cut), got '$MIN_AMPLITUDE_ADC'"
 [[ $REQUIRE_PEAK == [01] ]] || die "REQUIRE_PEAK must be 0 or 1, got '$REQUIRE_PEAK'"
 [[ $MAX_WAVEFORMS =~ ^[0-9]+$ ]] || die "MAX_WAVEFORMS must be a non-negative integer"
 [[ $CHANNELS_PER_PASS =~ ^[0-9]+$ ]] || die "CHANNELS_PER_PASS must be a non-negative integer"
@@ -289,7 +291,10 @@ if [[ $MODE == coincidence ]]; then
     WINDOW_LABEL=
     [[ $WINDOW_TICKS == "$STANDARD_WINDOW_TICKS" ]] || WINDOW_LABEL=_w$(tag_number "$WINDOW_TICKS")
     COINC_TAG=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT")_save_$(short_channels "$SAVE")
-    COINC_TAG+=${WINDOW_LABEL}_a$(tag_number "$MIN_AMPLITUDE_ADC")_r${RATE_LABEL}${INTERVALS_LABEL}
+    # MIN_AMPLITUDE_ADC=false: no amplitude cut, written anone (as rnone)
+    AMPLITUDE_LABEL=_a$(tag_number "$MIN_AMPLITUDE_ADC")
+    [[ $MIN_AMPLITUDE_ADC == false ]] && AMPLITUDE_LABEL=_anone
+    COINC_TAG+=${WINDOW_LABEL}${AMPLITUDE_LABEL}_r${RATE_LABEL}${INTERVALS_LABEL}
     SAMPLE_TAG=$COINC_TAG$CUT_LABEL
 else
     COINC_TAG=
@@ -338,7 +343,12 @@ legacy_tag() {
 #                          folder (and, without the cuts, the coincidence folder)
 span() { set -- $1; [[ $# -gt 1 ]] && echo "$1..${!#}" || echo "$1"; }  # 2030 .. 2041 -> 2030..2041
 if [[ $MODE == coincidence ]]; then
-    SAMPLE_DESCRIPTION="${TRIGGER%_coinc} coincidence: trigger $(modules_of "$LEFT") ($(span "$LEFT")) vs $(modules_of "$RIGHT") ($(span "$RIGHT")), saving $(modules_of "$SAVE") ($(span "$SAVE")), window $WINDOW_TICKS ticks, min amplitude $MIN_AMPLITUDE_ADC ADC"
+    SAMPLE_DESCRIPTION="${TRIGGER%_coinc} coincidence: trigger $(modules_of "$LEFT") ($(span "$LEFT")) vs $(modules_of "$RIGHT") ($(span "$RIGHT")), saving $(modules_of "$SAVE") ($(span "$SAVE")), window $WINDOW_TICKS ticks, "
+    if [[ $MIN_AMPLITUDE_ADC == false ]]; then
+        SAMPLE_DESCRIPTION+="no min amplitude"
+    else
+        SAMPLE_DESCRIPTION+="min amplitude $MIN_AMPLITUDE_ADC ADC"
+    fi
 else
     SAMPLE_DESCRIPTION="no coincidence: every waveform of ${CHANNEL_KEYWORD:-$CHANNELS}"
     ((MAX_WAVEFORMS)) && SAMPLE_DESCRIPTION+=", at most $MAX_WAVEFORMS per channel and run"

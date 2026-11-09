@@ -51,7 +51,8 @@ using waveform_plotting::RecordsByChannel;
 using waveform_plotting::plotAllWaveformsForSelection;
 using waveform_plotting::plotAndSaveStatistics;
 
-constexpr double DEFAULT_MAX_AUXILIARY_AMPLITUDE = 500.0;
+constexpr double DEFAULT_MAX_NOISE_AMPLITUDE = 500.0;
+constexpr double DEFAULT_MAX_POST_SIGNAL_AMPLITUDE = 500.0;
 constexpr double DEFAULT_MAX_FULL_RANGE_AMPLITUDE = 10000.0;
 constexpr std::size_t DEFAULT_MAX_PLOT_WAVEFORMS = 20000;
 constexpr std::size_t DEFAULT_CHANNELS_PER_PASS = 4;
@@ -67,7 +68,8 @@ struct Options {
     std::string run;
     std::string tag;
     std::set<unsigned int> channels;
-    double max_auxiliary_amplitude = DEFAULT_MAX_AUXILIARY_AMPLITUDE;
+    double max_noise_amplitude = DEFAULT_MAX_NOISE_AMPLITUDE;
+    double max_post_signal_amplitude = DEFAULT_MAX_POST_SIGNAL_AMPLITUDE;
     double max_full_range_amplitude = DEFAULT_MAX_FULL_RANGE_AMPLITUDE;
     bool require_peak = false;
     std::size_t max_waveforms = 0;  // per channel, after the rate cut; 0 = all
@@ -75,18 +77,8 @@ struct Options {
     std::size_t channels_per_pass = DEFAULT_CHANNELS_PER_PASS;  // 0 = all in one pass
 };
 
-struct WaveformKey {
-    int event = 0;
-    unsigned int channel = 0;
-    int waveform_index = 0;
-};
-
-struct FPromptRecord {
-    WaveformKey key;
-    double value = 0.0;
-};
-
-using FPromptRecordsByChannel = std::map<unsigned int, std::vector<FPromptRecord>>;
+// WaveformKey and WaveformSummaryRecord: coincidence_lib.hpp
+using SummaryRecordsByChannel = std::map<unsigned int, std::vector<WaveformSummaryRecord>>;
 
 // Per-channel counts. "entering" plays the role of plot_wfs_coincidence's
 // "from coincidence": the population the quality cuts are applied to.
@@ -154,7 +146,7 @@ struct ScanResult {
     std::map<unsigned int, BaselineNoise> noise;
     RecordsByChannel before_cuts;      // at most max_plot_waveforms per channel
     RecordsByChannel final_selection;
-    FPromptRecordsByChannel final_fprompt;
+    SummaryRecordsByChannel final_summaries;
 };
 
 // Totals over all passes of one run, for the cut summary.
@@ -211,7 +203,9 @@ void printUsage(const char *program)
         << "  --config FILE                Waveform interval INI file\n"
         << "  --output-dir DIR             Output directory\n"
         << "                               (default: coincidence/selected_waveforms/TAG)\n"
-        << "  --max-auxiliary-amplitude N  Noise/post-signal limit in ADC (default: 500)\n"
+        << "  --max-noise-amplitude N      Noise-region limit in ADC (default: 500)\n"
+        << "  --max-post-signal-amplitude N Post-signal limit in ADC (default: 500)\n"
+        << "  --max-auxiliary-amplitude N  Sets both limits above\n"
         << "  --max-full-range-amplitude N Full-waveform amplitude limit in ADC (default: 10000)\n"
         << "  --norm-rate-adc-threshold-file FILE\n"
         << "                               Keep only waveforms with max(ADC[50:180]) -\n"
@@ -260,6 +254,8 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
         if (argument == "--channel" || argument == "--run" || argument == "--tag"
             || argument == "--config" || argument == "--output-dir"
             || argument == "--max-auxiliary-amplitude"
+            || argument == "--max-noise-amplitude"
+            || argument == "--max-post-signal-amplitude"
             || argument == "--max-full-range-amplitude"
             || argument == "--norm-rate-adc-threshold-file"
             || argument == "--max-waveforms" || argument == "--max-plot-waveforms"
@@ -277,7 +273,12 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
             else if (argument == "--config") options.config = value;
             else if (argument == "--output-dir") options.output_dir = value;
             else if (argument == "--max-auxiliary-amplitude") {
-                options.max_auxiliary_amplitude = std::stod(value);
+                options.max_noise_amplitude = std::stod(value);
+                options.max_post_signal_amplitude = options.max_noise_amplitude;
+            } else if (argument == "--max-noise-amplitude") {
+                options.max_noise_amplitude = std::stod(value);
+            } else if (argument == "--max-post-signal-amplitude") {
+                options.max_post_signal_amplitude = std::stod(value);
             } else if (argument == "--max-full-range-amplitude") {
                 options.max_full_range_amplitude = std::stod(value);
             } else if (argument == "--norm-rate-adc-threshold-file") {
@@ -313,10 +314,16 @@ Options parseOptions(int argc, char **argv, const fs::path &program_dir)
     if (options.output_dir.empty()) {
         options.output_dir = program_dir / "selected_waveforms" / options.tag;
     }
-    if (!std::isfinite(options.max_auxiliary_amplitude)
-        || options.max_auxiliary_amplitude < 0.0) {
+    if (!std::isfinite(options.max_noise_amplitude)
+        || options.max_noise_amplitude < 0.0) {
         throw std::runtime_error(
-            "Maximum auxiliary amplitude must be a finite, non-negative value"
+            "Maximum noise-region amplitude must be a finite, non-negative value"
+        );
+    }
+    if (!std::isfinite(options.max_post_signal_amplitude)
+        || options.max_post_signal_amplitude < 0.0) {
+        throw std::runtime_error(
+            "Maximum post-signal amplitude must be a finite, non-negative value"
         );
     }
     if (!std::isfinite(options.max_full_range_amplitude)
@@ -439,12 +446,14 @@ ScanResult scanWaveforms(
     Int_t event = 0;
     UInt_t channel = 0;
     Int_t waveform_index = 0;
+    ULong64_t timestamp = 0;
     std::vector<short> samples;
     std::vector<short> *adc = &samples;
     int tree_number = -1;
     TBranch *event_branch = nullptr;
     TBranch *channel_branch = nullptr;
     TBranch *index_branch = nullptr;
+    TBranch *timestamp_branch = nullptr;
     TBranch *adc_branch = nullptr;
 
     ScanResult result;
@@ -470,6 +479,7 @@ ScanResult scanWaveforms(
             event_branch = bindBranch(*tree, "event", &event);
             channel_branch = bindBranch(*tree, "channel", &channel);
             index_branch = bindBranch(*tree, "waveform_index", &waveform_index);
+            timestamp_branch = bindBranch(*tree, "timestamp", &timestamp);
             adc_branch = bindBranch(*tree, "adc", &adc);
             adc_branch->SetAutoDelete(kFALSE);
         }
@@ -508,7 +518,8 @@ ScanResult scanWaveforms(
 
         const Coin1p0vSelectionDecision decision = evaluateCoin1p0vSelection(
             *adc, channel, baseline, analyzer,
-            options.max_auxiliary_amplitude, options.max_full_range_amplitude
+            options.max_noise_amplitude, options.max_post_signal_amplitude,
+            options.max_full_range_amplitude
         );
         const bool fails_no_peak = !decision.peak_found;
         cuts.rejected_noise += decision.fails_noise;
@@ -523,12 +534,16 @@ ScanResult scanWaveforms(
             ++cuts.final_selection;
             result.noise[channel].add(*adc, baseline);
             result.final_selection[channel].push_back({baseline, *adc});
-            if (analyzer.hasFprompt(channel)) {
-                result.final_fprompt[channel].push_back({
-                    {event, channel, waveform_index},
-                    analyzer.fprompt(*adc, channel)
-                });
+            // every channel gets a record; fprompt is NaN without a SiPM type.
+            // The timestamp is read only for the selected waveforms.
+            if (timestamp_branch->GetEntry(local_entry) <= 0) {
+                throw std::runtime_error(
+                    "Could not read ROOT timestamp at entry " + std::to_string(entry));
             }
+            result.final_summaries[channel].push_back(summarizeWaveform(
+                *adc, {event, channel, waveform_index},
+                static_cast<std::uint64_t>(timestamp), baseline, analyzer
+            ));
         } else {
             ++cuts.rejected_combined;
         }
@@ -593,7 +608,8 @@ void writeCutSummary(
                   std::vector<unsigned int>(channels.begin(), channels.end())) << '\n'
            << "Channels skipped for missing/invalid rate threshold: "
            << joinChannels(dropped_channels) << '\n'
-           << "Channels without prompt fraction (no SiPM type in coincidence_lib.cpp): "
+           << "Channels without prompt fraction (no SiPM type in coincidence_lib.cpp; "
+              "fprompt = nan in their CSV): "
            << joinChannels(no_fprompt) << '\n'
            << "Normalized-rate ADC-threshold file: "
            << (options.rate_threshold_file.empty()
@@ -630,9 +646,9 @@ void writeCutSummary(
            << "------------\n"
            << "Compatibility: plot_wfs_coincidence selection criteria and boundaries\n"
            << "1. Noise-region maximum ADC minus noise median <= "
-           << options.max_auxiliary_amplitude << " ADC\n"
+           << options.max_noise_amplitude << " ADC\n"
            << "2. Post-signal maximum ADC minus noise median <= "
-           << options.max_auxiliary_amplitude << " ADC\n"
+           << options.max_post_signal_amplitude << " ADC\n"
            << "3. Full-waveform positive amplitude above baseline <= "
            << options.max_full_range_amplitude << " ADC\n"
            << "4. Primary peak must be inside the configured signal region\n"
@@ -739,25 +755,25 @@ void writeCutSummary(
 }
 
 void writeFpromptCsvs(
-    const FPromptRecordsByChannel &records_by_channel,
+    const SummaryRecordsByChannel &records_by_channel,
     const std::string &run,
     const std::string &label,
     const fs::path &output_dir
 )
 {
+    // one row per final-selection waveform (multiplicity always 1 here)
     for (const auto &[channel, records] : records_by_channel) {
         const fs::path filename = output_dir
             / ("fprompt_" + std::to_string(channel) + "_" + label + ".csv");
         std::ofstream output(filename);
         if (!output) throw std::runtime_error("Could not create " + filename.string());
-        output << "run,event,channel,waveform_index_save,fprompt\n";
-        output << std::setprecision(std::numeric_limits<double>::max_digits10);
+        output << waveformSummaryCsvHeader() << '\n';
         for (const auto &record : records) {
-            output << run << ',' << record.key.event << ',' << record.key.channel << ','
-                   << record.key.waveform_index << ',' << record.value << '\n';
+            writeWaveformSummaryCsvFields(output, run, record);
+            output << '\n';
         }
         if (!output) throw std::runtime_error("Failed while writing " + filename.string());
-        std::cout << "Saved " << records.size() << " fprompt values to " << filename << '\n';
+        std::cout << "Saved " << records.size() << " waveform records to " << filename << '\n';
     }
 }
 
@@ -787,7 +803,7 @@ void process(const Options &options, const fs::path &repo_dir)
         analyzer.interval(channel, "noise");  // fail early on a missing channel section
         if (!analyzer.hasFprompt(channel)) {
             std::cerr << "Channel " << channel << " has no SiPM type in coincidence_lib.cpp: "
-                      << "no prompt fraction (fprompt CSV) for it\n";
+                      << "fprompt is nan in its CSV\n";
         }
     }
 
@@ -828,7 +844,7 @@ void process(const Options &options, const fs::path &repo_dir)
                       << ", entering " << cuts.entering
                       << ", selected " << cuts.final_selection << '\n';
         }
-        writeFpromptCsvs(scan.final_fprompt, run, label, options.output_dir);
+        writeFpromptCsvs(scan.final_summaries, run, label, options.output_dir);
         if (options.max_plot_waveforms > 0) {
             plotAllWaveformsForSelection(
                 group, scan.before_cuts, run, label,

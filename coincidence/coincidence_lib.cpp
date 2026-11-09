@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <numeric>
 #include <sstream>
@@ -665,7 +666,8 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     unsigned int channel,
     double baseline,
     const WaveformAnalyzer &analyzer,
-    double max_auxiliary_amplitude,
+    double max_noise_amplitude,
+    double max_post_signal_amplitude,
     double max_full_range_amplitude
 )
 {
@@ -678,8 +680,8 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     const double post_signal_amplitude = maximumAbsoluteAmplitudeInRegion(
     adc, analyzer, channel, "post_signal", baseline
     );
-    const bool fails_noise = noise_amplitude > max_auxiliary_amplitude;
-    const bool fails_post_signal = post_signal_amplitude > max_auxiliary_amplitude;
+    const bool fails_noise = noise_amplitude > max_noise_amplitude;
+    const bool fails_post_signal = post_signal_amplitude > max_post_signal_amplitude;
     const double amplitude = fullRangeAmplitude(adc, baseline);
     const bool fails_full_range_amplitude = amplitude > max_full_range_amplitude;
     const PeakSearchResult peak = analyzer.findPeak(adc, channel);
@@ -694,4 +696,70 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
         fails_additional_peak,
         peak.found
     };
+}
+
+double windowIntegral(const std::vector<short> &adc, double baseline)
+{
+    if (adc.size() < INTEGRAL_LAST_SAMPLE) {
+        throw std::runtime_error(
+            "Waveform has " + std::to_string(adc.size()) + " samples; the integral window ["
+            + std::to_string(INTEGRAL_FIRST_SAMPLE) + ", "
+            + std::to_string(INTEGRAL_LAST_SAMPLE) + ") needs "
+            + std::to_string(INTEGRAL_LAST_SAMPLE)
+        );
+    }
+    double sum = 0.0;
+    for (std::size_t sample = INTEGRAL_FIRST_SAMPLE; sample < INTEGRAL_LAST_SAMPLE; ++sample) {
+        sum += static_cast<double>(adc[sample]) - baseline;
+    }
+    const double first = static_cast<double>(adc[INTEGRAL_FIRST_SAMPLE]) - baseline;
+    const double last = static_cast<double>(adc[INTEGRAL_LAST_SAMPLE - 1]) - baseline;
+    return sum - 0.5 * (first + last);
+}
+
+WaveformSummaryRecord summarizeWaveform(
+    const std::vector<short> &adc,
+    const WaveformKey &key,
+    std::uint64_t timestamp,
+    double baseline,
+    const WaveformAnalyzer &analyzer
+)
+{
+    WaveformSummaryRecord record;
+    record.key = key;
+    record.timestamp = timestamp;
+    record.baseline = baseline;
+    record.integral_50_500 = windowIntegral(adc, baseline);
+    record.amplitude = maximumInRegion(adc, analyzer, key.channel, "signal") - baseline;
+    record.pulse_start = analyzer.pulseStart(adc, key.channel);
+    if (analyzer.hasFprompt(key.channel)) record.fprompt = analyzer.fprompt(adc, key.channel);
+    return record;
+}
+
+std::string waveformSummaryCsvHeader()
+{
+    return "run,event,channel,waveform_index_save,fprompt,"
+           "timestamp,baseline,integral_" + std::to_string(INTEGRAL_FIRST_SAMPLE)
+        + "_" + std::to_string(INTEGRAL_LAST_SAMPLE)
+        + ",amplitude,pulse_start,multiplicity";
+}
+
+void writeWaveformSummaryCsvFields(
+    std::ostream &output,
+    const std::string &run,
+    const WaveformSummaryRecord &record
+)
+{
+    output << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << run << ','
+           << record.key.event << ','
+           << record.key.channel << ','
+           << record.key.waveform_index << ','
+           << record.fprompt << ','
+           << record.timestamp << ','
+           << record.baseline << ','
+           << record.integral_50_500 << ','
+           << record.amplitude << ','
+           << record.pulse_start << ','
+           << record.multiplicity;
 }

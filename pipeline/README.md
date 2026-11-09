@@ -21,7 +21,7 @@ To compare workflows, fits and light yields included, see
 With the same settings both share one sample, so `workflow_all` only
 processes the 15 runs `workflow_fast` did not. `--runs reduced|full`
 overrides the file's `RUN_SET`. To try other choices, copy one of them to a
-new name (the name labels the fits and plots) and edit it.
+new name (the name labels the plots) and edit it.
 
 The run sets live in [`pds/runs.py`](../pds/runs.py) (`REDUCED_FIELDS`,
 `FIT_SCAN`). The reduced set has 4 fields at ≤ 40 kV, where most field
@@ -32,15 +32,18 @@ E = 0 peak.
 
 | Name | What it is | Example | Names |
 |---|---|---|---|
-| cut set | the recipe: file `cutsets/NAME.env` | `workflow_fast` | fit folder `$PDS_OUTPUT/pipeline/NAME/RUNSET/`, legends of `compare_cutsets.py` |
-| sample tag | the data the recipe selects, every choice spelled out | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_aux500_full10000` | `coincidence/selected_waveforms/TAG/` |
+| cut set | the recipe: file `cutsets/NAME.env` | `workflow_fast` | legends of `compare_cutsets.py` and the light-yield plot; recorded in the fit folder's `sample.txt` |
+| sample tag | the data the recipe selects, every choice spelled out | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_noise500_post2000_full10000` | `coincidence/selected_waveforms/TAG/`, and the fit and light yield made on it, `$PDS_OUTPUT/pipeline/TAG/RUNSET/` |
 | coincidence tag | the sample tag without the waveform cuts | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV` | `coincidence/saved_coincidences/TAG/` |
 
 `pipeline/run_pipeline.sh NAME --print-tag` prints the sample tag
-(`--print coinc-tag` the coincidence tag). Every run prints both names with
+(`--print coinc-tag` the coincidence tag, `--print outputs` every output
+folder of the cut set). Every run prints both names with
 the tag in words, and writes them to `sample.txt` in the selection and fit
-folders. The light-yield script and `compare_cutsets.py` label each sample
-`cut set [tag]`.
+folders. The light-yield script labels each sample `cut set [tag]`;
+`compare_cutsets.py` labels each fit `cut set, templates SET [tag]`, names
+the template sets in the figure title and draws each set with its own line
+style.
 
 Reading a tag, part by part:
 
@@ -50,11 +53,12 @@ Reading a tag, part by part:
 | `no_coinc` | `TRIGGER=no_coinc` | `no_coinc` | no coincidence |
 | `save_` | `TRIGGER` (or `SAVE_CHANNELS`), `CHANNELS` for `no_coinc` | `save_M7-M8`, `save_M1-2021`, `save_membrane` | the channels saved and analysed |
 | `w` | `WINDOW_TICKS` | `w20` | coincidence window [ticks], only when not the standard 10 |
-| `a` | `MIN_AMPLITUDE_ADC` | `a0` | minimum trigger amplitude [ADC] |
+| `a` | `MIN_AMPLITUDE_ADC` | `a0`, `anone` | minimum trigger amplitude [ADC], or no amplitude cut (`false`) |
 | `n` | `MAX_WAVEFORMS` | `n5000` | `no_coinc`, only when not 0 (all) |
 | `r` | `RATE_THRESHOLDS` | `r292kV`, `rnone` | rate-threshold folder (`RateAnalysis_data_` dropped), or no rate cut |
 | `iv-` | `INTERVALS` | `iv-xe` | only for a file other than `coincidence/waveform_intervals.ini` (`waveform_intervals_` dropped) |
-| `aux` | `MAX_AUX_ADC` | `aux500` | noise and post-signal limit [ADC] |
+| `noise`, `post` | `MAX_NOISE_ADC`, `MAX_POST_ADC` | `noise500_post2000` | noise-region and post-signal limits [ADC] |
+| `aux` | `MAX_NOISE_ADC` = `MAX_POST_ADC` | `aux500` | both limits, when equal (the tag of the single `MAX_AUX_ADC` they replaced, so those samples keep their folders) |
 | `full` | `MAX_FULL_RANGE_ADC` | `full10000` | full-waveform limit [ADC] |
 | `peak` | `REQUIRE_PEAK` | `peak` | `no_coinc`, only when 1 |
 
@@ -83,10 +87,11 @@ with the same choices share them. Copy
 | `TRIGGER` | all | which sample, see the table below |
 | `LEFT_CHANNELS`, `RIGHT_CHANNELS`, `SAVE_CHANNELS` | coincidence | `custom_coinc` only: trigger channels and saved channels (numbers and/or `all`, `cathode`, `membrane`) |
 | `WINDOW_TICKS` | coincidence | coincidence window |
-| `MIN_AMPLITUDE_ADC` | coincidence | minimum amplitude on the trigger channels |
+| `MIN_AMPLITUDE_ADC` | coincidence | minimum amplitude on the trigger channels (keeps amplitude > value, so `0` still drops ≤ 0); `false` = no amplitude cut |
 | `RATE_THRESHOLDS` | coincidence | rate-equalization threshold folder; empty = no rate cut |
 | `INTERVALS` | both | INI with the per-channel windows and an optional `[peak_finder]` section |
-| `MAX_AUX_ADC` | selection | noise and post-signal amplitude limit |
+| `MAX_NOISE_ADC` | selection | noise-region amplitude limit |
+| `MAX_POST_ADC` | selection | post-signal amplitude limit |
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; their channels must be saved (`default_coinc` → M7 M8, `inverse_coinc` → M5 M6) |
 | `TEMPLATES` | fit | detector response: `large_pulse` (default), `francesca` or `lucca`, see below |
@@ -129,7 +134,7 @@ copy `workflow_fast.env` to, say, `nocoinc_fast.env`, set `TRIGGER=no_coinc`
 and `CHANNELS="2080 2081"`, and compare:
 
 ```bash
-pipeline/run_pipeline.sh nocoinc_fast       # sample no_coinc_save_M8_r292kV_aux500_full10000
+pipeline/run_pipeline.sh nocoinc_fast       # sample no_coinc_save_M8_r292kV_noise500_post2000_full10000
 python3 pipeline/compare_cutsets.py workflow_fast nocoinc_fast
 ```
 
@@ -138,7 +143,7 @@ python3 pipeline/compare_cutsets.py workflow_fast nocoinc_fast
 | `CHANNELS` | channel numbers and/or `all`, `cathode`, `membrane` (expanded from the `[channel_NNNN]` sections of `INTERVALS`) |
 | `MODULES` | modules to fit (M1-M8, C1-C8), each needing its channels in `CHANNELS`; may be empty: selection only, the cut flow is still copied for `compare_cutsets.py` |
 | `RATE_THRESHOLDS` | same rate-equalization amplitude cut that `run_coincidence` applies to saved channels; empty = none |
-| `INTERVALS`, `MAX_AUX_ADC`, `MAX_FULL_RANGE_ADC` | as in coincidence mode |
+| `INTERVALS`, `MAX_NOISE_ADC`, `MAX_POST_ADC`, `MAX_FULL_RANGE_ADC` | as in coincidence mode |
 | `REQUIRE_PEAK` | `1` also rejects waveforms without a significant peak (default `0`, as in `plot_wfs_coincidence`) |
 | `MAX_WAVEFORMS` | per channel and run, after the rate cut, in file order; `0` = all (default) |
 | `CHANNELS_PER_PASS` | channels held in memory at once, one pass over the input per group (default 4; `0` = all) |
@@ -163,8 +168,8 @@ Caveats:
   reference (041523, no file); the driver prints a note. Their light yield
   then fails for lack of a 0 kV point. Set `RATE_THRESHOLDS=` to keep them.
 - The prompt fraction needs the channel's SiPM type, listed in
-  `coincidence_lib.cpp` for 1010-1081 and 2050-2081; other channels get no
-  `fprompt_*.csv`, as the cut summary states.
+  `coincidence_lib.cpp` for 1010-1081 and 2050-2081; other channels still get
+  their `fprompt_*.csv` rows, with `fprompt` = `nan`, as the cut summary states.
 
 ## Caching
 
@@ -178,13 +183,22 @@ Caveats:
   stays. Only edits to the contents of the threshold or intervals file, which
   the tag cannot show, are refused until `--force coincidence` /
   `--force selection` (the fit and light yield follow automatically).
-- The fit and light yield go to `$PDS_OUTPUT/pipeline/CUTSET/RUN_SET/`,
-  named by the cut set, not the tag: one result per cut set and run set.
-  They rerun by themselves when the cut set's sample tag changed, when the
-  selection changed or gained runs, or when `MODULES`/`TEMPLATES` (fit) or
-  `LY_CHANNELS` (light yield) changed, and a rerun first clears the previous
-  results (cut-flow copy, module fits, light-yield tables). To keep the
-  results of two variations side by side, give each its own cut-set file.
+- The fit and light yield are named by the sample tag, like the selection,
+  so every result traces back to `coincidence/selected_waveforms/TAG/`:
+  the fit goes to `$PDS_OUTPUT/pipeline/TAG/RUN_SET/fit_TEMPLATES/` (it also
+  depends on the template set), the light yield to
+  `$PDS_OUTPUT/pipeline/TAG/RUN_SET/lightyield/`. Editing a cut set's
+  waveform cuts therefore gives new fit folders too; the old ones stay.
+- Cut sets giving the same tag share these folders. Each module fit
+  (`plots_bertolini_avg/MODULE/.done`) and each `LY_CHANNELS` list
+  (`lightyield/.done_chs_2080_2081`) is cached on its own, so a cut set
+  fitting other modules or averaging other channels adds its results next
+  to the others instead of replacing them. A result reruns by itself when
+  the selection changed or gained runs; fits made on an older selection are
+  cleared when the cut flow is copied again.
+- Results of the previous layout, `$PDS_OUTPUT/pipeline/CUTSET/RUN_SET/`,
+  move to the tag folders with `pipeline/migrate_fit_folders.sh` (try
+  `--dry-run` first). Nothing is refitted: the markers are converted.
 - `--force coincidence,selection,fit,lightyield` redoes any stage; `--stages` runs a subset;
   `--dry-run` prints the commands.
 
@@ -196,13 +210,32 @@ Caveats:
 | `coincidence/selected_waveforms/TAG/pipeline_selection_settings.txt`, `sample.txt` | what the folder was selected from; the tag in words |
 | `coincidence/selected_waveforms/TAG/mean_median_waveforms_*.png` | mean, median, 16–84 % band |
 | `coincidence/selected_waveforms/TAG/channel_<ch>_*.csv` | mean waveform per channel and run |
-| `coincidence/selected_waveforms/TAG/fprompt_*.csv` | prompt fraction per waveform |
+| `coincidence/selected_waveforms/TAG/fprompt_*.csv` | one row per final-selection waveform, see below |
 | `coincidence/selected_waveforms/TAG/all_waveforms_*_{from_coincidence,before_cuts,final_selection}.png` | waveform density before and after the cuts |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/plots_bertolini_avg/MODULE/` | fit plots and `parameters/*.txt` |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/selection/` | cut flow the fit was made on |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/sample.txt` | cut set, sample tag spelled out, templates |
-| `$PDS_OUTPUT/pipeline/NAME/RUNSET/lightyield/fit_LY_wo_template_chs_*.{png,txt}` | S/S0 vs field, Birks fit, and the numbers behind the figure |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/plots_bertolini_avg/MODULE/` | fit plots and `parameters/*.txt` |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/selection/` | cut flow the fit was made on |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/sample.txt`, `cutset.env` | sample tag spelled out, selection folder, templates; the cut set of the last fit and a copy of it |
+| `$PDS_OUTPUT/pipeline/TAG/RUNSET/lightyield/fit_LY_wo_template_chs_*.{png,txt}` | S/S0 vs field, Birks fit, and the numbers behind the figure, per channel list |
 | `$PDS_OUTPUT/pipeline/compare/RUNSET/` | `compare_cutsets.py` figures and efficiency table |
+
+`fprompt_<ch>_<label>.csv` columns, one row per waveform that passed the cuts
+(written by `plot_wfs_coincidence` and `only_selection`; the first five are
+the original ones and stay first):
+
+| Column | Meaning |
+|---|---|
+| `run`, `event`, `channel`, `waveform_index_save` | the waveform in the ROOT `WaveformTree` |
+| `fprompt` | prompt fraction; `nan` for channels without a SiPM type |
+| `timestamp` | raw DAQ timestamp [16 ns ticks] |
+| `baseline` | median of the `noise` interval, as subtracted for the mean waveform |
+| `integral_50_500` | trapezoid of ADC − baseline over samples [50, 500), the window of `pds/integrals.py` (`INTEGRAL_FIRST_SAMPLE`, `INTEGRAL_LAST_SAMPLE`, mirrored in `coincidence_lib.hpp`) |
+| `amplitude` | max(ADC − baseline) in the `signal` interval [ADC] |
+| `pulse_start` | pulse start [ticks] |
+| `multiplicity` | coincidence mode: rows of the coincidence CSV naming this waveform (1 for `run_coincidence` output); the mean waveform counts the waveform this many times, so weight averages by it. Always 1 for `no_coinc` |
+| `minimum_timestamp_coinc`, `channel_coincident_left`, `waveform_index_coincident_left`, `channel_coincident_right`, `waveform_index_coincident_right` | coincidence mode only: the coincidence that selected the waveform (the first CSV row when multiplicity > 1) |
+
+The multiplicity-weighted mean of `integral_50_500` equals the integral of the
+mean waveform in `channel_<ch>_*.csv` up to float32 rounding.
 
 The fit runs in batch mode (no interactive Minuit windows). Set `PYTHON` to an
 interpreter with `iminuit` and `dunestyle`, e.g.

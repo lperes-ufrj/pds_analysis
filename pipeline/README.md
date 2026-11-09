@@ -90,6 +90,7 @@ with the same choices share them. Copy
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; their channels must be saved (`default_coinc` → M7 M8, `inverse_coinc` → M5 M6) |
 | `TEMPLATES` | fit | detector response: `large_pulse` (default), `francesca` or `lucca`, see below |
+| `FIT_PROPAGATE` | fit | `1`: fit with propagated uncertainties (data, E=0 normalization, tick, template), as in `fitting_bertolini_avg.py --propagate-uncertainties`; default `0` |
 | `LY_CHANNELS` | lightyield | channels averaged into the S/S0 curve; empty = the channels of `MODULES`, or every selected channel when `MODULES` is empty |
 
 `TRIGGER` values (channels: Mk → 20k0 20k1, Ck → 10k0 10k1):

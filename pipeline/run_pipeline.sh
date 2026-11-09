@@ -107,7 +107,7 @@ done
 # ------------------------------------------------------------------ cut set
 MODE= TRIGGER= WINDOW_TICKS= MIN_AMPLITUDE_ADC= RATE_THRESHOLDS= INTERVALS=
 MAX_AUX_ADC= MAX_FULL_RANGE_ADC= MODULES= CHANNELS= REQUIRE_PEAK= MAX_WAVEFORMS=
-CHANNELS_PER_PASS= TEMPLATES= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS= RUN_SET=
+CHANNELS_PER_PASS= TEMPLATES= FIT_PROPAGATE= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS= RUN_SET=
 LY_CHANNELS=
 # shellcheck source=/dev/null
 source "$CUTSET_FILE"
@@ -117,6 +117,7 @@ REQUIRE_PEAK=${REQUIRE_PEAK:-0}
 MAX_WAVEFORMS=${MAX_WAVEFORMS:-0}
 CHANNELS_PER_PASS=${CHANNELS_PER_PASS:-4}
 TEMPLATES=${TEMPLATES:-large_pulse}
+FIT_PROPAGATE=${FIT_PROPAGATE:-0}
 RUN_SET=${RUNS_OPTION:-${RUN_SET:-reduced}}
 case $RUN_SET in reduced|full) ;;
     *) die "run set must be 'reduced' or 'full', got '$RUN_SET'" ;; esac
@@ -149,6 +150,8 @@ done
 [[ $CHANNELS_PER_PASS =~ ^[0-9]+$ ]] || die "CHANNELS_PER_PASS must be a non-negative integer"
 case $TEMPLATES in large_pulse|francesca|lucca) ;;
     *) die "TEMPLATES must be 'large_pulse', 'francesca' or 'lucca', got '$TEMPLATES'" ;; esac
+
+[[ $FIT_PROPAGATE == [01] ]] || die "FIT_PROPAGATE must be 0 or 1, got '$FIT_PROPAGATE'"
 
 repo_path() { [[ $1 == /* ]] && echo "$1" || echo "$REPO_DIR/$1"; }
 INTERVALS=$(repo_path "$INTERVALS")
@@ -611,6 +614,9 @@ require_own_selection() {  # STAGE
 
 # ---------------------------------------------------------------- stage 3
 FIT_KEY="sample=$SAMPLE_TAG modules=$MODULES templates=$TEMPLATES"
+((FIT_PROPAGATE)) && FIT_KEY+=" propagate=1"
+FIT_ARGS=()
+((FIT_PROPAGATE)) && FIT_ARGS+=(--propagate-uncertainties)
 if has "$STAGES" fit; then
     if ! ((DRY_RUN)) && ! has "$FORCE" fit \
         && is_current "$FIT_DIR/.done" "$FIT_KEY"; then
@@ -645,6 +651,7 @@ if has "$STAGES" fit; then
                 --coinc-tag "$SAMPLE_TAG" \
                 --run-set "$RUN_SET" \
                 --templates "$TEMPLATES" \
+                ${FIT_ARGS[@]+"${FIT_ARGS[@]}"} \
                 --cutset "$CUTSET" \
                 --out-dir "$FIT_DIR" || failed+=" $module"
         done

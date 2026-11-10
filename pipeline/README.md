@@ -90,7 +90,7 @@ with the same choices share them. Copy
 | `MIN_AMPLITUDE_ADC` | coincidence | minimum amplitude on the trigger channels (keeps amplitude > value, so `0` still drops ≤ 0); `false` = no amplitude cut |
 | `RATE_THRESHOLDS` | coincidence | rate-equalization threshold folder; empty = no rate cut |
 | `INTERVALS` | both | INI with the per-channel windows and an optional `[peak_finder]` section |
-| `MAX_NOISE_ADC` | selection | noise-region amplitude limit |
+| `MAX_NOISE_ADC` | selection | limit on max \|ADC − baseline\| over every tick of the noise region |
 | `MAX_POST_ADC` | selection | post-signal amplitude limit |
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; their channels must be saved (`default_coinc` → M7 M8, `inverse_coinc` → M5 M6) |

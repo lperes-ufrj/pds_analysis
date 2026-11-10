@@ -134,8 +134,9 @@ private:
 std::unique_ptr<TChain> createChain(const std::vector<std::string> &files);
 
 // Waveform quality cuts shared by plot_wfs_coincidence and only_selection.
-// Compatibility contract: these are exactly the five rejection flags used by
-// coin_1p0v_code/plot_wfs_coincidence.cpp.  Plotting and reporting additions
+// These are the five rejection flags of coin_1p0v_code/plot_wfs_coincidence.cpp,
+// except that the noise cut uses |ADC - noise median| over the whole noise
+// region instead of the positive maximum.  Plotting and reporting additions
 // must consume this decision; they must not add acceptance criteria of their own.
 struct Coin1p0vSelectionDecision {
     bool fails_noise = false;

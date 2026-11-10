@@ -671,12 +671,13 @@ Coin1p0vSelectionDecision evaluateCoin1p0vSelection(
     double max_full_range_amplitude
 )
 {
-    // Keep these calculations and strict boundaries synchronized with the old
-    // coin_1p0v_code selection.  In particular, these are positive maxima
-    // above the noise median (not absolute excursions), and equality passes.
-    const double noise_amplitude = maximumInRegion(
-        adc, analyzer, channel, "noise"
-    ) - baseline;
+    // The noise and post-signal cuts take the largest |ADC - noise median|
+    // over every tick of their region, so excursions below the baseline count
+    // too; the full-range cut is a positive maximum.  Equality passes.  The
+    // noise cut departs from coin_1p0v_code, which took the positive maximum.
+    const double noise_amplitude = maximumAbsoluteAmplitudeInRegion(
+        adc, analyzer, channel, "noise", baseline
+    );
     const double post_signal_amplitude = maximumAbsoluteAmplitudeInRegion(
     adc, analyzer, channel, "post_signal", baseline
     );

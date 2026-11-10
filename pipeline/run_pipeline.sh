@@ -405,6 +405,9 @@ SELECTION_SETTINGS=$(
         echo "max_noise_adc=$MAX_NOISE_ADC max_post_adc=$MAX_POST_ADC"
     fi
     echo "max_full_range_adc=$MAX_FULL_RANGE_ADC"
+    # the noise cut became max |ADC - baseline|; without this line, folders
+    # made with the old positive-maximum cut would be reused as current
+    echo "noise_cut=absolute"
     if [[ $MODE == single ]]; then
         echo "mode=single channels=$CHANNELS"
         echo "require_peak=$REQUIRE_PEAK max_waveforms=$MAX_WAVEFORMS"
@@ -583,7 +586,8 @@ if has "$STAGES" selection; then
     elif [[ -f $settings_file ]] && [[ $(cat "$settings_file") != "$SELECTION_SETTINGS" ]]; then
         die "$SELECT_DIR was made from other inputs:
 $(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^/       /')
-       The rate-threshold or intervals file changed since its selection ran.
+       The rate-threshold or intervals file, or a cut definition, changed
+       since its selection ran.
        Rerun with --force selection to replace it."
     fi
     # written only when new, so its time stamp marks the last real change

@@ -7,7 +7,7 @@ PROGRAMS := run_coincidence plot_wfs_coincidence only_selection run_peak_finder
 TARGETS := $(addprefix $(BIN_DIR)/,$(PROGRAMS))
 HEADERS := coincidence_lib.hpp
 
-.PHONY: all clean test-peak-finder $(PROGRAMS)
+.PHONY: all clean test-peak-finder test-group-coincidence $(PROGRAMS)
 
 all: $(TARGETS)
 
@@ -21,6 +21,11 @@ run_peak_finder: $(BIN_DIR)/run_peak_finder
 
 test-peak-finder: $(BIN_DIR)/run_peak_finder
 	python3 tests/test_peak_finder.py
+
+# group mode of run_coincidence on synthetic waveforms
+test-group-coincidence: | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-unused-function test_group_coincidence.cpp coincidence_lib.cpp -o $(BIN_DIR)/test_group_coincidence $(LDLIBS)
+	$(BIN_DIR)/test_group_coincidence waveform_intervals.ini
 
 $(BIN_DIR):
 	mkdir -p $@

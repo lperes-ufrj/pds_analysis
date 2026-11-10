@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Coincidence -> waveform selection -> mean-waveform fit -> light yield vs
 # field, for one cut set.
-# TRIGGER in the cut set: default_coinc, inverse_coinc, custom_coinc, or
-# no_coinc (no coincidence stage: bin/only_selection takes every waveform of
-# CHANNELS and applies the same quality cuts).
+# TRIGGER in the cut set: default_coinc, inverse_coinc, custom_coinc,
+# group_coinc (at least MIN_COINC_CHANNELS of COINC_CHANNELS within the
+# window), or no_coinc (no coincidence stage: bin/only_selection takes every
+# waveform of CHANNELS and applies the same quality cuts).
 #
 # Usage:
 #   pipeline/run_pipeline.sh CUTSET [options]
@@ -31,6 +32,8 @@
 #   coincidence tag  coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV
 #                    trigger channels (one side vs the other), saved
 #                    channels, min amplitude, rate cut
+#                    coinc_M3-M4_3of4_save_M8_a0_r292kV (group_coinc: at
+#                    least 3 of the 4 channels of M3+M4)
 #   sample tag       coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_noise500_post2000_full10000
 #                    + the waveform cuts
 #                    no_coinc_save_M8_r292kV_noise500_post2000_full10000
@@ -120,7 +123,7 @@ done
 MODE= TRIGGER= WINDOW_TICKS= MIN_AMPLITUDE_ADC= RATE_THRESHOLDS= INTERVALS=
 MAX_AUX_ADC= MAX_NOISE_ADC= MAX_POST_ADC= MAX_FULL_RANGE_ADC= MODULES= CHANNELS= REQUIRE_PEAK= MAX_WAVEFORMS=
 CHANNELS_PER_PASS= TEMPLATES= FIT_PROPAGATE= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS= RUN_SET=
-LY_CHANNELS=
+LY_CHANNELS= COINC_CHANNELS= MIN_COINC_CHANNELS=
 # shellcheck source=/dev/null
 source "$CUTSET_FILE"
 [[ -z $MODE ]] || die "MODE is no longer used: write TRIGGER=no_coinc instead of MODE=single
@@ -140,6 +143,10 @@ case $RUN_SET in reduced|full) ;;
 #   default_coinc  trigger M3+M4 (2030..2041) vs M5+M6 (2050..2061), saves M7+M8
 #   inverse_coinc  trigger M7+M8 (2070..2081) vs M1+M2 (2010..2021), saves M5+M6
 #   custom_coinc   trigger LEFT_CHANNELS vs RIGHT_CHANNELS, saves SAVE_CHANNELS
+#   group_coinc    trigger: pulses on at least MIN_COINC_CHANNELS (a number, or
+#                  all) of COINC_CHANNELS, the latest at most WINDOW_TICKS
+#                  after the earliest; saves SAVE_CHANNELS pulses within
+#                  WINDOW_TICKS of that group
 #   no_coinc       no coincidence: every waveform of CHANNELS (bin/only_selection)
 DEFAULT_LEFT="2030 2031 2040 2041"; DEFAULT_RIGHT="2050 2051 2060 2061"
 DEFAULT_SAVE="2070 2071 2080 2081"
@@ -150,10 +157,12 @@ case $TRIGGER in
         required="WINDOW_TICKS MIN_AMPLITUDE_ADC MODULES" ;;
     custom_coinc) MODE=coincidence
         required="LEFT_CHANNELS RIGHT_CHANNELS SAVE_CHANNELS WINDOW_TICKS MIN_AMPLITUDE_ADC" ;;
+    group_coinc) MODE=coincidence
+        required="COINC_CHANNELS MIN_COINC_CHANNELS SAVE_CHANNELS WINDOW_TICKS MIN_AMPLITUDE_ADC" ;;
     no_coinc) MODE=single; required="CHANNELS" ;;
     m8)  die "TRIGGER=m8 is now TRIGGER=default_coinc (same sample, same hash)" ;;
     low) die "TRIGGER=low is now TRIGGER=inverse_coinc (same sample, same hash)" ;;
-    *) die "TRIGGER must be default_coinc, inverse_coinc, custom_coinc or no_coinc, got '$TRIGGER'" ;;
+    *) die "TRIGGER must be default_coinc, inverse_coinc, custom_coinc, group_coinc or no_coinc, got '$TRIGGER'" ;;
 esac
 # MODULES may be empty for no_coinc and custom_coinc: selection only, no fit.
 for var in $required INTERVALS MAX_NOISE_ADC MAX_POST_ADC MAX_FULL_RANGE_ADC; do
@@ -228,6 +237,15 @@ case $TRIGGER in
             echo "[note] these custom_coinc channels are the inverse_coinc layout; using it" >&2
             TRIGGER=inverse_coinc
         fi ;;
+    group_coinc)
+        GROUP=$(expand_channels COINC_CHANNELS "$COINC_CHANNELS")
+        SAVE=$(expand_channels SAVE_CHANNELS "$SAVE_CHANNELS")
+        GROUP_SIZE=$(wc -w <<< "$GROUP")
+        MIN_COINC_CHANNELS=$(echo $MIN_COINC_CHANNELS)
+        # all = every channel of the group: the same sample as their number
+        [[ $MIN_COINC_CHANNELS == all ]] && MIN_COINC_CHANNELS=$GROUP_SIZE
+        [[ $MIN_COINC_CHANNELS =~ ^[1-9][0-9]*$ ]] && ((MIN_COINC_CHANNELS <= GROUP_SIZE)) \
+            || die "MIN_COINC_CHANNELS must be all or 1..$GROUP_SIZE (the number of COINC_CHANNELS), got '$MIN_COINC_CHANNELS'" ;;
     no_coinc)
         CHANNEL_KEYWORD=
         [[ $(echo $CHANNELS) =~ ^(all|cathode|membrane)$ ]] && CHANNEL_KEYWORD=$CHANNELS
@@ -302,7 +320,13 @@ CUT_LABEL+=_full$(tag_number "$MAX_FULL_RANGE_ADC")
 if [[ $MODE == coincidence ]]; then
     WINDOW_LABEL=
     [[ $WINDOW_TICKS == "$STANDARD_WINDOW_TICKS" ]] || WINDOW_LABEL=_w$(tag_number "$WINDOW_TICKS")
-    COINC_TAG=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT")_save_$(short_channels "$SAVE")
+    if [[ $TRIGGER == group_coinc ]]; then
+        # at least K of the N group channels: _KofN
+        COINC_TAG=coinc_$(short_channels "$GROUP")_${MIN_COINC_CHANNELS}of${GROUP_SIZE}
+    else
+        COINC_TAG=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT")
+    fi
+    COINC_TAG+=_save_$(short_channels "$SAVE")
     # MIN_AMPLITUDE_ADC=false: no amplitude cut, written anone (as rnone)
     AMPLITUDE_LABEL=_a$(tag_number "$MIN_AMPLITUDE_ADC")
     [[ $MIN_AMPLITUDE_ADC == false ]] && AMPLITUDE_LABEL=_anone
@@ -323,6 +347,8 @@ SAMPLE_TAG=${SAMPLE_TAG//[^A-Za-z0-9_-]/-}
 # are the names of an even older scheme.
 legacy_tag() {
     local key hash rate=$(basename "${RATE_THRESHOLDS:-norate}") label n tag
+    # the previous scheme had no group_coinc: no old folder to find
+    [[ $TRIGGER == group_coinc ]] && { echo; return; }
     rate=${rate#RateAnalysis_data}
     if [[ $MODE == coincidence ]]; then
         case $TRIGGER in default_coinc) key=m8 ;; inverse_coinc) key=low ;; *) key=custom ;; esac
@@ -356,8 +382,12 @@ legacy_tag() {
 #                          fit and light-yield folders (and, without the cuts,
 #                          the coincidence folder)
 span() { set -- $1; [[ $# -gt 1 ]] && echo "$1..${!#}" || echo "$1"; }  # 2030 .. 2041 -> 2030..2041
-if [[ $MODE == coincidence ]]; then
+if [[ $TRIGGER == group_coinc ]]; then
+    SAMPLE_DESCRIPTION="group coincidence: at least $MIN_COINC_CHANNELS of the $GROUP_SIZE channels of $(modules_of "$GROUP") ($(span "$GROUP")) within $WINDOW_TICKS ticks, saving $(modules_of "$SAVE") ($(span "$SAVE")) within $WINDOW_TICKS ticks of the group, "
+elif [[ $MODE == coincidence ]]; then
     SAMPLE_DESCRIPTION="${TRIGGER%_coinc} coincidence: trigger $(modules_of "$LEFT") ($(span "$LEFT")) vs $(modules_of "$RIGHT") ($(span "$RIGHT")), saving $(modules_of "$SAVE") ($(span "$SAVE")), window $WINDOW_TICKS ticks, "
+fi
+if [[ $MODE == coincidence ]]; then
     if [[ $MIN_AMPLITUDE_ADC == false ]]; then
         SAMPLE_DESCRIPTION+="no min amplitude"
     else
@@ -387,7 +417,11 @@ LY_DIR=$RESULT_DIR/lightyield
 # from other contents is refused until the stage is rerun with --force.
 COINC_SETTINGS=
 [[ $MODE == coincidence ]] && COINC_SETTINGS=$(
-    echo "trigger=$TRIGGER left=$LEFT right=$RIGHT save=$SAVE"
+    if [[ $TRIGGER == group_coinc ]]; then
+        echo "trigger=$TRIGGER coinc=$GROUP min_coinc=$MIN_COINC_CHANNELS save=$SAVE"
+    else
+        echo "trigger=$TRIGGER left=$LEFT right=$RIGHT save=$SAVE"
+    fi
     echo "window_ticks=$WINDOW_TICKS min_amplitude_adc=$MIN_AMPLITUDE_ADC"
     echo "rate_thresholds=$RATE_TEXT sha1=$RATE_SHA1"
     echo "intervals=$(basename "$INTERVALS") sha1=$(intervals_for_coincidence | sha1sum | cut -c1-12)"
@@ -544,6 +578,12 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$COINC_SETTINGS") | sed 's/^/   
         printf '%s\n' "$COINC_SETTINGS" > "$settings_file"
     fi
 
+    # shellcheck disable=SC2206
+    if [[ $TRIGGER == group_coinc ]]; then
+        trigger_args=(--channels-coincident $GROUP --min-coincident-channels "$MIN_COINC_CHANNELS")
+    else
+        trigger_args=(--channels-coincident-left $LEFT --channels-coincident-right $RIGHT)
+    fi
     for line in "${RUN_LINES[@]}"; do
         read -r kv run <<< "$line"
         marker=$COINC_DIR/.done_$run
@@ -561,8 +601,7 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$COINC_SETTINGS") | sed 's/^/   
             --run "$run" --timestamp "$COINC_TAG" \
             --output-dir "$REPO_DIR/coincidence/saved_coincidences" \
             --config "$INTERVALS" \
-            --channels-coincident-left $LEFT \
-            --channels-coincident-right $RIGHT \
+            "${trigger_args[@]}" \
             --channels-to-save $SAVE \
             --window-ticks "$WINDOW_TICKS" \
             --min-amplitude-adc "$MIN_AMPLITUDE_ADC" \

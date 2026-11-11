@@ -18,6 +18,8 @@
 #   --dry-run            print the commands without running them
 #   --print-tag          print the cut set's sample tag and exit
 #   --print WHAT         print and exit: tag (= --print-tag), coinc-tag,
+#                        variation (the name of the cut set's copy in
+#                        cutsets/variations/),
 #                        legacy-tag (the old hashed tag, for migrate_tags.sh),
 #                        selection-settings, coinc-settings, outputs (the
 #                        output folders as KEY=VALUE lines, for the
@@ -62,6 +64,10 @@
 #                                               S/S0 vs field with the Birks fit
 #                                               (analysis/LY_vs_EF/fit_LY_wo_template.py)
 #                                               averaged over LY_CHANNELS
+#   pipeline/cutsets/variations/VARIATION.env  a copy of the cut set, saved
+#                                               once its selection exists and
+#                                               named by the sample (--print
+#                                               variation), to refit it later
 # Cut sets giving the same sample tag share these folders: each module fit
 # and each LY_CHANNELS list is cached on its own, so they keep each other's
 # results.
@@ -342,6 +348,42 @@ fi
 COINC_TAG=${COINC_TAG//[^A-Za-z0-9_-]/-}
 SAMPLE_TAG=${SAMPLE_TAG//[^A-Za-z0-9_-]/-}
 
+# The name of the cut set's copy in pipeline/cutsets/variations/ (saved once
+# the selection exists, below): the sample tag with the trigger in a word and
+# without the parts most samples share (min amplitude 0, the 292kV rate cut,
+# the saved channels of the standard layouts):
+#   coinc_noise500_post2000_full10000      M3+M4 vs M5+M6, saving M7+M8
+#   inverse_aux2000_full12000              M7+M8 vs M1+M2, saving M5+M6
+#   coinc_save_C2-C3-C5-C8_noise500_...    M3+M4 vs M5+M6, other saved channels
+#   coinc_M1-M2_vs_M5-M6_save_M8_...       other trigger channels
+#   group_cathode_14of16_noise500_...      group_coinc (saving M7+M8 unless _save_)
+#   no_coinc_M8_noise500_...               no_coinc
+# The other parts of the tag stay (_w, _anone, _n, _rnone, _iv-, _peak), so
+# two samples never share a name.
+STANDARD_AMPLITUDE_LABEL=_a0
+STANDARD_RATE_LABEL=292kV
+if [[ $MODE == coincidence ]]; then
+    if [[ $TRIGGER == group_coinc ]]; then
+        VARIATION=group_$(channels_label "$GROUP")_${MIN_COINC_CHANNELS}of${GROUP_SIZE}
+        standard_save=$DEFAULT_SAVE
+    elif [[ "$LEFT|$RIGHT" == "$DEFAULT_LEFT|$DEFAULT_RIGHT" ]]; then
+        VARIATION=coinc; standard_save=$DEFAULT_SAVE
+    elif [[ "$LEFT|$RIGHT" == "$INVERSE_LEFT|$INVERSE_RIGHT" ]]; then
+        VARIATION=inverse; standard_save=$INVERSE_SAVE
+    else
+        VARIATION=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT"); standard_save=
+    fi
+    [[ $SAVE == "$standard_save" ]] || VARIATION+=_save_$(short_channels "$SAVE")
+    VARIATION+=$WINDOW_LABEL
+    [[ $AMPLITUDE_LABEL == "$STANDARD_AMPLITUDE_LABEL" ]] || VARIATION+=$AMPLITUDE_LABEL
+else
+    VARIATION=no_coinc_$(channels_label "$CHANNELS")$LIMIT_LABEL
+fi
+[[ $RATE_LABEL == "$STANDARD_RATE_LABEL" ]] || VARIATION+=_r$RATE_LABEL
+VARIATION+=$INTERVALS_LABEL$CUT_LABEL
+VARIATION=${VARIATION//[^A-Za-z0-9_-]/-}
+VARIATION_FILE=$SCRIPT_DIR/cutsets/variations/$VARIATION.env
+
 # The tag of the previous scheme (readable prefix + hash), only to find and
 # rename old folders: pipeline/migrate_tags.sh. The hash keys m8/low/single
 # are the names of an even older scheme.
@@ -453,10 +495,11 @@ case $PRINT in
     ""|outputs) ;;  # outputs: after the light-yield channels, below
     tag)                echo "$SAMPLE_TAG"; exit 0 ;;
     coinc-tag)          echo "$COINC_TAG"; exit 0 ;;
+    variation)          echo "$VARIATION"; exit 0 ;;
     legacy-tag)         legacy_tag; exit 0 ;;
     selection-settings) printf '%s\n' "$SELECTION_SETTINGS"; exit 0 ;;
     coinc-settings)     [[ $MODE == coincidence ]] && printf '%s\n' "$COINC_SETTINGS"; exit 0 ;;
-    *) die "--print takes tag, coinc-tag, legacy-tag, selection-settings, coinc-settings or outputs" ;;
+    *) die "--print takes tag, coinc-tag, variation, legacy-tag, selection-settings, coinc-settings or outputs" ;;
 esac
 
 mapfile -t RUN_LINES < <(cd "$REPO_DIR" && "$PYTHON" -m pds.runs "$RUN_SET")
@@ -531,10 +574,17 @@ if [[ $MODE == single && -n $RATE_THRESHOLDS ]]; then
         "only_selection skips them there (they stay only in runs without a threshold file)"
 fi
 
+VARIATION_LINE=
+if [[ $CUTSET_FILE != "$VARIATION_FILE" ]]; then
+    VARIATION_LINE="Saved as cut set        : variations/$VARIATION   "
+    [[ -f $VARIATION_FILE ]] && VARIATION_LINE+="(already there)" \
+        || VARIATION_LINE+="(once the selection exists)"
+    VARIATION_LINE+=$'\n'
+fi
 cat <<EOF
 ============================================================
 Cut set    (the recipe) : $CUTSET   ($CUTSET_FILE)
-Sample tag (the data)   : $SAMPLE_TAG
+${VARIATION_LINE}Sample tag (the data)   : $SAMPLE_TAG
                           = $SAMPLE_DESCRIPTION
 ${COINC_TAG:+Coincidence tag         : $COINC_TAG
 }Channels                : ${SAVE:-$CHANNELS}
@@ -687,6 +737,42 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^
     done
 fi
 
+# ------------------------------------------------ the cut set as a variation
+# Once the selection folder holds this cut set's selection (made now or
+# earlier), the cut set is copied to pipeline/cutsets/variations/VARIATION.env
+# (named above), so the sample can be refitted later without restoring the
+# workflow file:  pipeline/run_pipeline.sh variations/VARIATION --stages fit,lightyield
+# The copy is written once. One already there is kept with its edits: the same
+# name means the same [sample] and [cuts] values, and its [fit] and
+# [lightyield] values are its own.
+save_variation() {
+    local target=$VARIATION_FILE settings_file=$SELECT_DIR/pipeline_selection_settings.txt
+    [[ -f $settings_file && $(cat "$settings_file") == "$SELECTION_SETTINGS" ]] || return 0
+    [[ $CUTSET_FILE == "$target" ]] && return 0
+    if [[ -f $target ]]; then
+        echo "[kept] cut set variations/$VARIATION (already there)"
+        return 0
+    fi
+    mkdir -p "$(dirname -- "$target")"
+    {
+        cat <<EOF
+# Cut set "$VARIATION": reproduces the selection folder
+#   coincidence/selected_waveforms/$SAMPLE_TAG/
+# (saved by pipeline/run_pipeline.sh on $(date +%F) from cut set $CUTSET), to run
+# the fit and light yield on it:
+#   pipeline/run_pipeline.sh variations/$VARIATION --stages fit,lightyield
+# Keep the [sample] and [cuts] values below: they give that folder's sample
+# tag. The [fit] and [lightyield] values can be changed freely.
+
+EOF
+        # the cut set without its leading comment block
+        awk 'started || !/^[[:space:]]*(#|$)/ { started = 1; print }' "$CUTSET_FILE"
+    } > "$target.tmp"
+    mv -- "$target.tmp" "$target"
+    echo "[saved] cut set variations/$VARIATION ($target)"
+}
+((DRY_RUN)) || save_variation
+
 # ------------------------------------------- shared by the fit and light yield
 # A result reading the selection is current when its MARKER holds the same
 # settings (KEY) and is newer than the last selection change and every
@@ -706,8 +792,10 @@ require_own_selection() {  # STAGE
     [[ -f $settings_file ]] \
         || die "no selection in $SELECT_DIR; run the selection stage first"
     [[ $(cat "$settings_file") == "$SELECTION_SETTINGS" ]] \
-        || die "$SELECT_DIR was selected from other inputs (the rate-threshold or
-       intervals file changed since). Rerun with --stages selection,$1 --force selection."
+        || die "$SELECT_DIR was selected from other inputs:
+$(diff "$settings_file" <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^/       /')
+       The rate-threshold or intervals file, or a cut definition, changed
+       since. Rerun with --stages selection,$1 --force selection."
 }
 
 # ---------------------------------------------------------------- stage 3

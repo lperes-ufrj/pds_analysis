@@ -1,3 +1,26 @@
+# Group coincidence
+
+`run_coincidence` pairs left and right channels by default. With
+`--channels-coincident CH ...` it uses one group of channels instead: a
+coincidence is pulses on at least `--min-coincident-channels K` (default
+`all`) distinct channels of the group, the latest at most `--window-ticks`
+after the earliest (t0). Saved channels are matched as in left/right mode,
+with the pulse between t0 − window and the latest group pulse + window.
+
+```bash
+bin/run_coincidence coincidence/input_lists/input_run039510.txt --run 039510 \
+  --channels-coincident 2030 2031 2040 2041 --min-coincident-channels 3 \
+  --channels-to-save 2080 2081
+```
+
+The CSV keeps the left/right columns, filled with the group's earliest and
+latest pulses, so `plot_wfs_coincidence` reads it unchanged. Two more
+columns give the group: `n_coincident_channels` and `coincident_channels`
+(`2030;2031;2040`). In the pipeline, use `TRIGGER=group_coinc`
+(see `pipeline/README.md`). `make -C coincidence test-group-coincidence`
+checks the window boundaries, repeated pulses on one channel, the amplitude
+cut, the saved-pulse limits and overlapping groups on synthetic waveforms.
+
 # Selection without coincidence
 
 `only_selection.cpp` (`bin/only_selection`) takes every waveform of the

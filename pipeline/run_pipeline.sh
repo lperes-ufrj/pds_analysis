@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Coincidence -> waveform selection -> mean-waveform fit -> light yield vs
 # field, for one cut set.
-# TRIGGER in the cut set: default_coinc, inverse_coinc, custom_coinc, or
-# no_coinc (no coincidence stage: bin/only_selection takes every waveform of
-# CHANNELS and applies the same quality cuts).
+# TRIGGER in the cut set: default_coinc, inverse_coinc, custom_coinc,
+# group_coinc (at least MIN_COINC_CHANNELS of COINC_CHANNELS within the
+# window), or no_coinc (no coincidence stage: bin/only_selection takes every
+# waveform of CHANNELS and applies the same quality cuts).
 #
 # Usage:
 #   pipeline/run_pipeline.sh CUTSET [options]
@@ -17,6 +18,8 @@
 #   --dry-run            print the commands without running them
 #   --print-tag          print the cut set's sample tag and exit
 #   --print WHAT         print and exit: tag (= --print-tag), coinc-tag,
+#                        variation (the name of the cut set's copy in
+#                        cutsets/variations/),
 #                        legacy-tag (the old hashed tag, for migrate_tags.sh),
 #                        selection-settings, coinc-settings, outputs (the
 #                        output folders as KEY=VALUE lines, for the
@@ -31,6 +34,8 @@
 #   coincidence tag  coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV
 #                    trigger channels (one side vs the other), saved
 #                    channels, min amplitude, rate cut
+#                    coinc_M3-M4_3of4_save_M8_a0_r292kV (group_coinc: at
+#                    least 3 of the 4 channels of M3+M4)
 #   sample tag       coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV_noise500_post2000_full10000
 #                    + the waveform cuts
 #                    no_coinc_save_M8_r292kV_noise500_post2000_full10000
@@ -59,6 +64,10 @@
 #                                               S/S0 vs field with the Birks fit
 #                                               (analysis/LY_vs_EF/fit_LY_wo_template.py)
 #                                               averaged over LY_CHANNELS
+#   pipeline/cutsets/variations/VARIATION.env  a copy of the cut set, saved
+#                                               once its selection exists and
+#                                               named by the sample (--print
+#                                               variation), to refit it later
 # Cut sets giving the same sample tag share these folders: each module fit
 # and each LY_CHANNELS list is cached on its own, so they keep each other's
 # results.
@@ -120,7 +129,7 @@ done
 MODE= TRIGGER= WINDOW_TICKS= MIN_AMPLITUDE_ADC= RATE_THRESHOLDS= INTERVALS=
 MAX_AUX_ADC= MAX_NOISE_ADC= MAX_POST_ADC= MAX_FULL_RANGE_ADC= MODULES= CHANNELS= REQUIRE_PEAK= MAX_WAVEFORMS=
 CHANNELS_PER_PASS= TEMPLATES= FIT_PROPAGATE= LEFT_CHANNELS= RIGHT_CHANNELS= SAVE_CHANNELS= RUN_SET=
-LY_CHANNELS=
+LY_CHANNELS= COINC_CHANNELS= MIN_COINC_CHANNELS=
 # shellcheck source=/dev/null
 source "$CUTSET_FILE"
 [[ -z $MODE ]] || die "MODE is no longer used: write TRIGGER=no_coinc instead of MODE=single
@@ -140,6 +149,10 @@ case $RUN_SET in reduced|full) ;;
 #   default_coinc  trigger M3+M4 (2030..2041) vs M5+M6 (2050..2061), saves M7+M8
 #   inverse_coinc  trigger M7+M8 (2070..2081) vs M1+M2 (2010..2021), saves M5+M6
 #   custom_coinc   trigger LEFT_CHANNELS vs RIGHT_CHANNELS, saves SAVE_CHANNELS
+#   group_coinc    trigger: pulses on at least MIN_COINC_CHANNELS (a number, or
+#                  all) of COINC_CHANNELS, the latest at most WINDOW_TICKS
+#                  after the earliest; saves SAVE_CHANNELS pulses within
+#                  WINDOW_TICKS of that group
 #   no_coinc       no coincidence: every waveform of CHANNELS (bin/only_selection)
 DEFAULT_LEFT="2030 2031 2040 2041"; DEFAULT_RIGHT="2050 2051 2060 2061"
 DEFAULT_SAVE="2070 2071 2080 2081"
@@ -150,10 +163,12 @@ case $TRIGGER in
         required="WINDOW_TICKS MIN_AMPLITUDE_ADC MODULES" ;;
     custom_coinc) MODE=coincidence
         required="LEFT_CHANNELS RIGHT_CHANNELS SAVE_CHANNELS WINDOW_TICKS MIN_AMPLITUDE_ADC" ;;
+    group_coinc) MODE=coincidence
+        required="COINC_CHANNELS MIN_COINC_CHANNELS SAVE_CHANNELS WINDOW_TICKS MIN_AMPLITUDE_ADC" ;;
     no_coinc) MODE=single; required="CHANNELS" ;;
     m8)  die "TRIGGER=m8 is now TRIGGER=default_coinc (same sample, same hash)" ;;
     low) die "TRIGGER=low is now TRIGGER=inverse_coinc (same sample, same hash)" ;;
-    *) die "TRIGGER must be default_coinc, inverse_coinc, custom_coinc or no_coinc, got '$TRIGGER'" ;;
+    *) die "TRIGGER must be default_coinc, inverse_coinc, custom_coinc, group_coinc or no_coinc, got '$TRIGGER'" ;;
 esac
 # MODULES may be empty for no_coinc and custom_coinc: selection only, no fit.
 for var in $required INTERVALS MAX_NOISE_ADC MAX_POST_ADC MAX_FULL_RANGE_ADC; do
@@ -228,6 +243,15 @@ case $TRIGGER in
             echo "[note] these custom_coinc channels are the inverse_coinc layout; using it" >&2
             TRIGGER=inverse_coinc
         fi ;;
+    group_coinc)
+        GROUP=$(expand_channels COINC_CHANNELS "$COINC_CHANNELS")
+        SAVE=$(expand_channels SAVE_CHANNELS "$SAVE_CHANNELS")
+        GROUP_SIZE=$(wc -w <<< "$GROUP")
+        MIN_COINC_CHANNELS=$(echo $MIN_COINC_CHANNELS)
+        # all = every channel of the group: the same sample as their number
+        [[ $MIN_COINC_CHANNELS == all ]] && MIN_COINC_CHANNELS=$GROUP_SIZE
+        [[ $MIN_COINC_CHANNELS =~ ^[1-9][0-9]*$ ]] && ((MIN_COINC_CHANNELS <= GROUP_SIZE)) \
+            || die "MIN_COINC_CHANNELS must be all or 1..$GROUP_SIZE (the number of COINC_CHANNELS), got '$MIN_COINC_CHANNELS'" ;;
     no_coinc)
         CHANNEL_KEYWORD=
         [[ $(echo $CHANNELS) =~ ^(all|cathode|membrane)$ ]] && CHANNEL_KEYWORD=$CHANNELS
@@ -302,7 +326,13 @@ CUT_LABEL+=_full$(tag_number "$MAX_FULL_RANGE_ADC")
 if [[ $MODE == coincidence ]]; then
     WINDOW_LABEL=
     [[ $WINDOW_TICKS == "$STANDARD_WINDOW_TICKS" ]] || WINDOW_LABEL=_w$(tag_number "$WINDOW_TICKS")
-    COINC_TAG=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT")_save_$(short_channels "$SAVE")
+    if [[ $TRIGGER == group_coinc ]]; then
+        # at least K of the N group channels: _KofN
+        COINC_TAG=coinc_$(short_channels "$GROUP")_${MIN_COINC_CHANNELS}of${GROUP_SIZE}
+    else
+        COINC_TAG=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT")
+    fi
+    COINC_TAG+=_save_$(short_channels "$SAVE")
     # MIN_AMPLITUDE_ADC=false: no amplitude cut, written anone (as rnone)
     AMPLITUDE_LABEL=_a$(tag_number "$MIN_AMPLITUDE_ADC")
     [[ $MIN_AMPLITUDE_ADC == false ]] && AMPLITUDE_LABEL=_anone
@@ -318,11 +348,49 @@ fi
 COINC_TAG=${COINC_TAG//[^A-Za-z0-9_-]/-}
 SAMPLE_TAG=${SAMPLE_TAG//[^A-Za-z0-9_-]/-}
 
+# The name of the cut set's copy in pipeline/cutsets/variations/ (saved once
+# the selection exists, below): the sample tag with the trigger in a word and
+# without the parts most samples share (min amplitude 0, the 292kV rate cut,
+# the saved channels of the standard layouts):
+#   coinc_noise500_post2000_full10000      M3+M4 vs M5+M6, saving M7+M8
+#   inverse_aux2000_full12000              M7+M8 vs M1+M2, saving M5+M6
+#   coinc_save_C2-C3-C5-C8_noise500_...    M3+M4 vs M5+M6, other saved channels
+#   coinc_M1-M2_vs_M5-M6_save_M8_...       other trigger channels
+#   group_cathode_14of16_noise500_...      group_coinc (saving M7+M8 unless _save_)
+#   no_coinc_M8_noise500_...               no_coinc
+# The other parts of the tag stay (_w, _anone, _n, _rnone, _iv-, _peak), so
+# two samples never share a name.
+STANDARD_AMPLITUDE_LABEL=_a0
+STANDARD_RATE_LABEL=292kV
+if [[ $MODE == coincidence ]]; then
+    if [[ $TRIGGER == group_coinc ]]; then
+        VARIATION=group_$(channels_label "$GROUP")_${MIN_COINC_CHANNELS}of${GROUP_SIZE}
+        standard_save=$DEFAULT_SAVE
+    elif [[ "$LEFT|$RIGHT" == "$DEFAULT_LEFT|$DEFAULT_RIGHT" ]]; then
+        VARIATION=coinc; standard_save=$DEFAULT_SAVE
+    elif [[ "$LEFT|$RIGHT" == "$INVERSE_LEFT|$INVERSE_RIGHT" ]]; then
+        VARIATION=inverse; standard_save=$INVERSE_SAVE
+    else
+        VARIATION=coinc_$(short_channels "$LEFT")_vs_$(short_channels "$RIGHT"); standard_save=
+    fi
+    [[ $SAVE == "$standard_save" ]] || VARIATION+=_save_$(short_channels "$SAVE")
+    VARIATION+=$WINDOW_LABEL
+    [[ $AMPLITUDE_LABEL == "$STANDARD_AMPLITUDE_LABEL" ]] || VARIATION+=$AMPLITUDE_LABEL
+else
+    VARIATION=no_coinc_$(channels_label "$CHANNELS")$LIMIT_LABEL
+fi
+[[ $RATE_LABEL == "$STANDARD_RATE_LABEL" ]] || VARIATION+=_r$RATE_LABEL
+VARIATION+=$INTERVALS_LABEL$CUT_LABEL
+VARIATION=${VARIATION//[^A-Za-z0-9_-]/-}
+VARIATION_FILE=$SCRIPT_DIR/cutsets/variations/$VARIATION.env
+
 # The tag of the previous scheme (readable prefix + hash), only to find and
 # rename old folders: pipeline/migrate_tags.sh. The hash keys m8/low/single
 # are the names of an even older scheme.
 legacy_tag() {
     local key hash rate=$(basename "${RATE_THRESHOLDS:-norate}") label n tag
+    # the previous scheme had no group_coinc: no old folder to find
+    [[ $TRIGGER == group_coinc ]] && { echo; return; }
     rate=${rate#RateAnalysis_data}
     if [[ $MODE == coincidence ]]; then
         case $TRIGGER in default_coinc) key=m8 ;; inverse_coinc) key=low ;; *) key=custom ;; esac
@@ -356,8 +424,12 @@ legacy_tag() {
 #                          fit and light-yield folders (and, without the cuts,
 #                          the coincidence folder)
 span() { set -- $1; [[ $# -gt 1 ]] && echo "$1..${!#}" || echo "$1"; }  # 2030 .. 2041 -> 2030..2041
-if [[ $MODE == coincidence ]]; then
+if [[ $TRIGGER == group_coinc ]]; then
+    SAMPLE_DESCRIPTION="group coincidence: at least $MIN_COINC_CHANNELS of the $GROUP_SIZE channels of $(modules_of "$GROUP") ($(span "$GROUP")) within $WINDOW_TICKS ticks, saving $(modules_of "$SAVE") ($(span "$SAVE")) within $WINDOW_TICKS ticks of the group, "
+elif [[ $MODE == coincidence ]]; then
     SAMPLE_DESCRIPTION="${TRIGGER%_coinc} coincidence: trigger $(modules_of "$LEFT") ($(span "$LEFT")) vs $(modules_of "$RIGHT") ($(span "$RIGHT")), saving $(modules_of "$SAVE") ($(span "$SAVE")), window $WINDOW_TICKS ticks, "
+fi
+if [[ $MODE == coincidence ]]; then
     if [[ $MIN_AMPLITUDE_ADC == false ]]; then
         SAMPLE_DESCRIPTION+="no min amplitude"
     else
@@ -387,7 +459,11 @@ LY_DIR=$RESULT_DIR/lightyield
 # from other contents is refused until the stage is rerun with --force.
 COINC_SETTINGS=
 [[ $MODE == coincidence ]] && COINC_SETTINGS=$(
-    echo "trigger=$TRIGGER left=$LEFT right=$RIGHT save=$SAVE"
+    if [[ $TRIGGER == group_coinc ]]; then
+        echo "trigger=$TRIGGER coinc=$GROUP min_coinc=$MIN_COINC_CHANNELS save=$SAVE"
+    else
+        echo "trigger=$TRIGGER left=$LEFT right=$RIGHT save=$SAVE"
+    fi
     echo "window_ticks=$WINDOW_TICKS min_amplitude_adc=$MIN_AMPLITUDE_ADC"
     echo "rate_thresholds=$RATE_TEXT sha1=$RATE_SHA1"
     echo "intervals=$(basename "$INTERVALS") sha1=$(intervals_for_coincidence | sha1sum | cut -c1-12)"
@@ -405,6 +481,9 @@ SELECTION_SETTINGS=$(
         echo "max_noise_adc=$MAX_NOISE_ADC max_post_adc=$MAX_POST_ADC"
     fi
     echo "max_full_range_adc=$MAX_FULL_RANGE_ADC"
+    # the noise cut became max |ADC - baseline|; without this line, folders
+    # made with the old positive-maximum cut would be reused as current
+    echo "noise_cut=absolute"
     if [[ $MODE == single ]]; then
         echo "mode=single channels=$CHANNELS"
         echo "require_peak=$REQUIRE_PEAK max_waveforms=$MAX_WAVEFORMS"
@@ -416,10 +495,11 @@ case $PRINT in
     ""|outputs) ;;  # outputs: after the light-yield channels, below
     tag)                echo "$SAMPLE_TAG"; exit 0 ;;
     coinc-tag)          echo "$COINC_TAG"; exit 0 ;;
+    variation)          echo "$VARIATION"; exit 0 ;;
     legacy-tag)         legacy_tag; exit 0 ;;
     selection-settings) printf '%s\n' "$SELECTION_SETTINGS"; exit 0 ;;
     coinc-settings)     [[ $MODE == coincidence ]] && printf '%s\n' "$COINC_SETTINGS"; exit 0 ;;
-    *) die "--print takes tag, coinc-tag, legacy-tag, selection-settings, coinc-settings or outputs" ;;
+    *) die "--print takes tag, coinc-tag, variation, legacy-tag, selection-settings, coinc-settings or outputs" ;;
 esac
 
 mapfile -t RUN_LINES < <(cd "$REPO_DIR" && "$PYTHON" -m pds.runs "$RUN_SET")
@@ -494,10 +574,17 @@ if [[ $MODE == single && -n $RATE_THRESHOLDS ]]; then
         "only_selection skips them there (they stay only in runs without a threshold file)"
 fi
 
+VARIATION_LINE=
+if [[ $CUTSET_FILE != "$VARIATION_FILE" ]]; then
+    VARIATION_LINE="Saved as cut set        : variations/$VARIATION   "
+    [[ -f $VARIATION_FILE ]] && VARIATION_LINE+="(already there)" \
+        || VARIATION_LINE+="(once the selection exists)"
+    VARIATION_LINE+=$'\n'
+fi
 cat <<EOF
 ============================================================
 Cut set    (the recipe) : $CUTSET   ($CUTSET_FILE)
-Sample tag (the data)   : $SAMPLE_TAG
+${VARIATION_LINE}Sample tag (the data)   : $SAMPLE_TAG
                           = $SAMPLE_DESCRIPTION
 ${COINC_TAG:+Coincidence tag         : $COINC_TAG
 }Channels                : ${SAVE:-$CHANNELS}
@@ -541,6 +628,12 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$COINC_SETTINGS") | sed 's/^/   
         printf '%s\n' "$COINC_SETTINGS" > "$settings_file"
     fi
 
+    # shellcheck disable=SC2206
+    if [[ $TRIGGER == group_coinc ]]; then
+        trigger_args=(--channels-coincident $GROUP --min-coincident-channels "$MIN_COINC_CHANNELS")
+    else
+        trigger_args=(--channels-coincident-left $LEFT --channels-coincident-right $RIGHT)
+    fi
     for line in "${RUN_LINES[@]}"; do
         read -r kv run <<< "$line"
         marker=$COINC_DIR/.done_$run
@@ -558,8 +651,7 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$COINC_SETTINGS") | sed 's/^/   
             --run "$run" --timestamp "$COINC_TAG" \
             --output-dir "$REPO_DIR/coincidence/saved_coincidences" \
             --config "$INTERVALS" \
-            --channels-coincident-left $LEFT \
-            --channels-coincident-right $RIGHT \
+            "${trigger_args[@]}" \
             --channels-to-save $SAVE \
             --window-ticks "$WINDOW_TICKS" \
             --min-amplitude-adc "$MIN_AMPLITUDE_ADC" \
@@ -583,7 +675,8 @@ if has "$STAGES" selection; then
     elif [[ -f $settings_file ]] && [[ $(cat "$settings_file") != "$SELECTION_SETTINGS" ]]; then
         die "$SELECT_DIR was made from other inputs:
 $(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^/       /')
-       The rate-threshold or intervals file changed since its selection ran.
+       The rate-threshold or intervals file, or a cut definition, changed
+       since its selection ran.
        Rerun with --force selection to replace it."
     fi
     # written only when new, so its time stamp marks the last real change
@@ -644,6 +737,42 @@ $(diff <(cat "$settings_file") <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^
     done
 fi
 
+# ------------------------------------------------ the cut set as a variation
+# Once the selection folder holds this cut set's selection (made now or
+# earlier), the cut set is copied to pipeline/cutsets/variations/VARIATION.env
+# (named above), so the sample can be refitted later without restoring the
+# workflow file:  pipeline/run_pipeline.sh variations/VARIATION --stages fit,lightyield
+# The copy is written once. One already there is kept with its edits: the same
+# name means the same [sample] and [cuts] values, and its [fit] and
+# [lightyield] values are its own.
+save_variation() {
+    local target=$VARIATION_FILE settings_file=$SELECT_DIR/pipeline_selection_settings.txt
+    [[ -f $settings_file && $(cat "$settings_file") == "$SELECTION_SETTINGS" ]] || return 0
+    [[ $CUTSET_FILE == "$target" ]] && return 0
+    if [[ -f $target ]]; then
+        echo "[kept] cut set variations/$VARIATION (already there)"
+        return 0
+    fi
+    mkdir -p "$(dirname -- "$target")"
+    {
+        cat <<EOF
+# Cut set "$VARIATION": reproduces the selection folder
+#   coincidence/selected_waveforms/$SAMPLE_TAG/
+# (saved by pipeline/run_pipeline.sh on $(date +%F) from cut set $CUTSET), to run
+# the fit and light yield on it:
+#   pipeline/run_pipeline.sh variations/$VARIATION --stages fit,lightyield
+# Keep the [sample] and [cuts] values below: they give that folder's sample
+# tag. The [fit] and [lightyield] values can be changed freely.
+
+EOF
+        # the cut set without its leading comment block
+        awk 'started || !/^[[:space:]]*(#|$)/ { started = 1; print }' "$CUTSET_FILE"
+    } > "$target.tmp"
+    mv -- "$target.tmp" "$target"
+    echo "[saved] cut set variations/$VARIATION ($target)"
+}
+((DRY_RUN)) || save_variation
+
 # ------------------------------------------- shared by the fit and light yield
 # A result reading the selection is current when its MARKER holds the same
 # settings (KEY) and is newer than the last selection change and every
@@ -663,8 +792,10 @@ require_own_selection() {  # STAGE
     [[ -f $settings_file ]] \
         || die "no selection in $SELECT_DIR; run the selection stage first"
     [[ $(cat "$settings_file") == "$SELECTION_SETTINGS" ]] \
-        || die "$SELECT_DIR was selected from other inputs (the rate-threshold or
-       intervals file changed since). Rerun with --stages selection,$1 --force selection."
+        || die "$SELECT_DIR was selected from other inputs:
+$(diff "$settings_file" <(printf '%s\n' "$SELECTION_SETTINGS") | sed 's/^/       /')
+       The rate-threshold or intervals file, or a cut definition, changed
+       since. Rerun with --stages selection,$1 --force selection."
 }
 
 # ---------------------------------------------------------------- stage 3

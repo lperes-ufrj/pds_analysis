@@ -37,6 +37,12 @@ struct Arguments {
     std::vector<unsigned int> left{2030, 2031, 2040, 2041};
     std::vector<unsigned int> right{2050, 2051, 2060, 2061};
     std::vector<unsigned int> save{2070, 2071, 2080, 2081};
+    // Group mode (--channels-coincident, instead of left/right): a coincidence
+    // is pulses on at least min_coincident distinct channels of `group`, all
+    // within window_ticks of the earliest one.
+    std::vector<unsigned int> group;
+    std::size_t min_coincident = 0;
+    bool groupMode() const { return !group.empty(); }
     int window_ticks = 10;
     // --min-amplitude-adc false: no amplitude cut, every waveform of the
     // coincidence channels can form a coincidence
@@ -55,6 +61,8 @@ struct WaveformRecord {
     bool save_eligible;
 };
 
+// A left/right pair, or in group mode a group: then "left" is its earliest
+// pulse, "right" its latest, and dt_ns their difference.
 struct CoincidentPair {
     std::int64_t minimum_time;
     std::int64_t maximum_time;
@@ -64,6 +72,8 @@ struct CoincidentPair {
     int left_waveform_index;
     unsigned int right_channel;
     int right_waveform_index;
+    std::size_t channel_count = 2;   // group mode: distinct channels
+    std::string channels;            // group mode: "2030;2031;2040"
 };
 
 struct Candidate {
@@ -74,6 +84,8 @@ struct Candidate {
     int left_waveform_index;
     unsigned int right_channel;
     int right_waveform_index;
+    std::size_t channel_count = 2;
+    std::string channels;
 };
 
 using EventChannels = std::unordered_map<unsigned int, std::vector<WaveformRecord>>;
@@ -121,6 +133,11 @@ std::string minAmplitudeText(const Arguments &args)
     return output.str();
 }
 
+const char *coincidenceUnit(const Arguments &args)
+{
+    return args.groupMode() ? "groups" : "pairs";
+}
+
 void printUsage(const char *program)
 {
     std::cout
@@ -130,6 +147,11 @@ void printUsage(const char *program)
         << "  --channels-coincident-left CH [CH ...]\n"
         << "  --channels-coincident-right CH [CH ...]\n"
         << "  --channels-to-save CH [CH ...]\n"
+        << "  --channels-coincident CH [CH ...]\n"
+        << "                      group mode, instead of left/right: pulses on at\n"
+        << "                      least --min-coincident-channels of these channels,\n"
+        << "                      all within the window after the earliest one\n"
+        << "  --min-coincident-channels K|all (group mode; default: all)\n"
         << "  --window-ticks N\n"
         << "  --min-amplitude-adc X|false (default: 0; keeps amplitude > X;\n"
         << "                      false = no amplitude cut)\n"
@@ -158,6 +180,8 @@ Arguments parseArguments(int argc, char **argv)
         : executable_dir;
     args.config = program_dir / "waveform_intervals.ini";
     args.output_dir = program_dir / "saved_coincidences";
+    bool left_or_right_given = false;
+    std::string min_coincident_text;
 
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
@@ -172,10 +196,19 @@ Arguments parseArguments(int argc, char **argv)
             args.output_dir = argv[index];
         } else if (option == "--channels-coincident-left") {
             args.left = parseChannels(index, argc, argv);
+            left_or_right_given = true;
         } else if (option == "--channels-coincident-right") {
             args.right = parseChannels(index, argc, argv);
+            left_or_right_given = true;
         } else if (option == "--channels-to-save") {
             args.save = parseChannels(index, argc, argv);
+        } else if (option == "--channels-coincident") {
+            args.group = parseChannels(index, argc, argv);
+        } else if (option == "--min-coincident-channels") {
+            if (++index >= argc) {
+                throw std::runtime_error("--min-coincident-channels requires a value");
+            }
+            min_coincident_text = argv[index];
         } else if (option == "--window-ticks") {
             if (++index >= argc) throw std::runtime_error("--window-ticks requires a value");
             args.window_ticks = std::stoi(argv[index]);
@@ -229,6 +262,38 @@ Arguments parseArguments(int argc, char **argv)
     }
     if (args.output_dir.empty()) throw std::runtime_error("--output-dir cannot be empty");
     if (args.window_ticks < 0) throw std::runtime_error("--window-ticks cannot be negative");
+    if (args.groupMode()) {
+        if (left_or_right_given) {
+            throw std::runtime_error(
+                "--channels-coincident replaces --channels-coincident-left/-right;"
+                " give one or the other"
+            );
+        }
+        if (std::set<unsigned int>(args.group.begin(), args.group.end()).size()
+            != args.group.size()) {
+            throw std::runtime_error("--channels-coincident lists a channel twice");
+        }
+        const std::size_t count = args.group.size();
+        if (min_coincident_text.empty() || min_coincident_text == "all") {
+            args.min_coincident = count;
+        } else {
+            const bool digits = std::all_of(
+                min_coincident_text.begin(), min_coincident_text.end(),
+                [](unsigned char value) { return std::isdigit(value); }
+            );
+            args.min_coincident = digits && min_coincident_text.size() <= 4
+                ? std::stoul(min_coincident_text) : 0;
+            if (args.min_coincident < 1 || args.min_coincident > count) {
+                throw std::runtime_error(
+                    "--min-coincident-channels takes 'all' or 1.." + std::to_string(count)
+                    + " (the number of --channels-coincident), got '"
+                    + min_coincident_text + "'"
+                );
+            }
+        }
+    } else if (!min_coincident_text.empty()) {
+        throw std::runtime_error("--min-coincident-channels needs --channels-coincident");
+    }
     if (!std::isfinite(args.min_amplitude_adc) || args.min_amplitude_adc < 0.0) {
         throw std::runtime_error("--min-amplitude-adc must be finite and nonnegative");
     }
@@ -345,10 +410,17 @@ void CreateTXTfile(
            << "Waveform configuration: " << args.config.string() << '\n'
            << "Input ROOT files: " << input_files.size() << "\n\n"
            << "Selection configuration\n"
-           << "-----------------------\n"
-           << "Coincidence channels (left): " << joinChannels(args.left, ", ") << '\n'
-           << "Coincidence channels (right): " << joinChannels(args.right, ", ") << '\n'
-           << "Saved channels requested: "
+           << "-----------------------\n";
+    if (args.groupMode()) {
+        output << "Coincidence channels (group): " << joinChannels(args.group, ", ") << '\n'
+               << "Minimum coincident channels: " << args.min_coincident << " of "
+               << args.group.size()
+               << " (distinct channels; latest pulse - earliest <= window)\n";
+    } else {
+        output << "Coincidence channels (left): " << joinChannels(args.left, ", ") << '\n'
+               << "Coincidence channels (right): " << joinChannels(args.right, ", ") << '\n';
+    }
+    output << "Saved channels requested: "
            << joinChannels(requested_save_channels, ", ") << '\n'
            << "Saved channels used: "
            << (args.save.empty() ? std::string("none") : joinChannels(args.save, ", "))
@@ -402,9 +474,10 @@ void CreateTXTfile(
            << statistics.saved_channel_waveforms_rejected << '\n'
            << "Events with accepted relevant waveforms: "
            << statistics.events_with_accepted_waveforms << '\n'
-           << "Events containing coincidence pairs: "
+           << "Events containing coincidence " << coincidenceUnit(args) << ": "
            << statistics.coincident_events << '\n'
-           << "Coincident pairs found: " << statistics.coincident_pairs << '\n'
+           << "Coincident " << coincidenceUnit(args) << " found: "
+           << statistics.coincident_pairs << '\n'
            << "Final selected events written to CSV: "
            << statistics.selected_events << '\n'
            << "Final selected waveforms written to CSV: "
@@ -452,6 +525,72 @@ const std::vector<WaveformRecord> &channelRecords(
     return found == channels.end() ? empty : found->second;
 }
 
+// Group mode: each eligible pulse of the group channels is tried as the
+// earliest one, t0; the pulses in [t0, t0 + window] are a coincidence when
+// they cover at least min_coincident distinct channels (a channel counts once,
+// however many pulses it has there). A window that ends at the same pulse as
+// the previous one is a subset of it and is skipped: it would save nothing
+// new and would report fewer channels. Overlapping groups that each reach a
+// pulse the other does not are both kept, as overlapping pairs in left/right
+// mode; each saved waveform keeps its best match. Returned in increasing t0.
+std::vector<CoincidentPair> findGroupCoincidences(
+    const EventChannels &channels,
+    const Arguments &args,
+    std::int64_t window_ns
+)
+{
+    struct Pulse {
+        std::int64_t time;
+        std::uint64_t timestamp;
+        unsigned int channel;
+        int waveform_index;
+    };
+    std::vector<Pulse> pulses;
+    for (const unsigned int channel : args.group) {
+        for (const auto &record : channelRecords(channels, channel)) {
+            if (!record.coincidence_eligible) continue;
+            pulses.push_back({
+                record.pulse_time, record.timestamp, channel, record.waveform_index
+            });
+        }
+    }
+    std::sort(pulses.begin(), pulses.end(), [](const Pulse &left, const Pulse &right) {
+        return std::tie(left.time, left.channel, left.waveform_index)
+            < std::tie(right.time, right.channel, right.waveform_index);
+    });
+
+    std::vector<CoincidentPair> groups;
+    std::size_t previous_last = pulses.size();  // none yet
+    for (std::size_t first = 0; first < pulses.size(); ++first) {
+        std::set<unsigned int> members;
+        std::uint64_t minimum_timestamp = pulses[first].timestamp;
+        std::size_t last = first;
+        for (std::size_t next = first;
+             next < pulses.size() && pulses[next].time - pulses[first].time <= window_ns;
+             ++next) {
+            members.insert(pulses[next].channel);
+            minimum_timestamp = std::min(minimum_timestamp, pulses[next].timestamp);
+            last = next;
+        }
+        const bool inside_previous = last == previous_last;
+        previous_last = last;
+        if (inside_previous || members.size() < args.min_coincident) continue;
+        groups.push_back({
+            pulses[first].time,
+            pulses[last].time,
+            minimum_timestamp,
+            pulses[last].time - pulses[first].time,
+            pulses[first].channel,
+            pulses[first].waveform_index,
+            pulses[last].channel,
+            pulses[last].waveform_index,
+            members.size(),
+            joinChannels(std::vector<unsigned int>(members.begin(), members.end()), ";")
+        });
+    }
+    return groups;
+}
+
 RunStatistics scanCoincidence(
     TChain &chain,
     const WaveformAnalyzer &analyzer,
@@ -466,8 +605,11 @@ RunStatistics scanCoincidence(
     Int_t waveform_index = 0;
     std::vector<short> *adc = nullptr;
 
-    std::set<unsigned int> coincidence_channels(args.left.begin(), args.left.end());
-    coincidence_channels.insert(args.right.begin(), args.right.end());
+    std::set<unsigned int> coincidence_channels(args.group.begin(), args.group.end());
+    if (!args.groupMode()) {
+        coincidence_channels.insert(args.left.begin(), args.left.end());
+        coincidence_channels.insert(args.right.begin(), args.right.end());
+    }
     const std::set<unsigned int> save_channels(args.save.begin(), args.save.end());
     std::set<unsigned int> valid_channels = coincidence_channels;
     valid_channels.insert(save_channels.begin(), save_channels.end());
@@ -612,12 +754,19 @@ RunStatistics scanCoincidence(
     std::size_t coincident_events = 0;
     std::uint64_t coincident_pairs_total = 0;
     std::size_t event_position = 0;
+    // group mode makes its groups instead of the left/right pairs
+    const std::vector<unsigned int> no_channels;
+    const std::vector<unsigned int> &pair_left_channels =
+        args.groupMode() ? no_channels : args.left;
 
     for (const auto &[event_number, channels] : by_event) {
         ++event_position;
         std::vector<CoincidentPair> coincident_pairs;
+        if (args.groupMode()) {
+            coincident_pairs = findGroupCoincidences(channels, args, window_ns);
+        }
 
-        for (const unsigned int left_channel : args.left) {
+        for (const unsigned int left_channel : pair_left_channels) {
             const auto &left_records = channelRecords(channels, left_channel);
             for (const unsigned int right_channel : args.right) {
                 const auto &right_records = channelRecords(channels, right_channel);
@@ -649,7 +798,9 @@ RunStatistics scanCoincidence(
                             left_channel,
                             left_record.waveform_index,
                             right_channel,
-                            right->waveform_index
+                            right->waveform_index,
+                            2,
+                            {}
                         });
                     }
                 }
@@ -697,7 +848,9 @@ RunStatistics scanCoincidence(
                         pair->left_channel,
                         pair->left_waveform_index,
                         pair->right_channel,
-                        pair->right_waveform_index
+                        pair->right_waveform_index,
+                        pair->channel_count,
+                        pair->channels
                     };
                     const auto previous = selected.find(key);
                     if (previous == selected.end() || betterCandidate(candidate, previous->second)) {
@@ -712,7 +865,8 @@ RunStatistics scanCoincidence(
             std::cout << "Progress: " << event_position << '/' << by_event.size()
                       << " events; current event=" << event_number
                       << "; coincident events=" << coincident_events
-                      << "; coincident pairs=" << coincident_pairs_total
+                      << "; coincident " << coincidenceUnit(args) << '='
+                      << coincident_pairs_total
                       << "; unique waveforms selected=" << selected.size() << std::endl;
         }
     }
@@ -723,7 +877,10 @@ RunStatistics scanCoincidence(
         << "event,channel,waveform_index_save,dt_ns_coinc,dt_ns_save,"
         << "minimum_timestamp_coinc,"
         << "channel_coincident_left,waveform_index_coincident_left,"
-        << "channel_coincident_right,waveform_index_coincident_right\r\n";
+        << "channel_coincident_right,waveform_index_coincident_right"
+        // group mode: left/right are the group's earliest and latest pulses
+        << (args.groupMode() ? ",n_coincident_channels,coincident_channels" : "")
+        << "\r\n";
     for (const auto &[key, candidate] : selected) {
         const auto &[selected_event, selected_channel, selected_waveform] = key;
         output << selected_event << ','
@@ -735,7 +892,11 @@ RunStatistics scanCoincidence(
                << candidate.left_channel << ','
                << candidate.left_waveform_index << ','
                << candidate.right_channel << ','
-               << candidate.right_waveform_index << "\r\n";
+               << candidate.right_waveform_index;
+        if (args.groupMode()) {
+            output << ',' << candidate.channel_count << ',' << candidate.channels;
+        }
+        output << "\r\n";
     }
     if (!output) throw std::runtime_error("Failed while writing output file: " + output_file);
     std::cout << "Saved " << selected.size() << " unique waveforms to " << output_file
@@ -806,10 +967,17 @@ int main(int argc, char **argv)
                   << "Input files: " << files.size() << '\n'
                   << "Entries: " << chain->GetEntries() << '\n'
                   << "Minimum baseline-subtracted waveform amplitude: "
-                  << minAmplitudeText(args) << '\n'
-                  << "Testing left channels [" << joinChannels(args.left, ", ")
-                  << "] against right channels [" << joinChannels(args.right, ", ")
-                  << "], saving channels ["
+                  << minAmplitudeText(args) << '\n';
+        if (args.groupMode()) {
+            std::cout << "Requiring at least " << args.min_coincident << " of channels ["
+                      << joinChannels(args.group, ", ") << "] within "
+                      << args.window_ticks << " ticks";
+        } else {
+            std::cout << "Testing left channels [" << joinChannels(args.left, ", ")
+                      << "] against right channels [" << joinChannels(args.right, ", ")
+                      << ']';
+        }
+        std::cout << ", saving channels ["
                   << (args.save.empty() ? std::string("none") : joinChannels(args.save, ", "))
                   << ']'
                   << std::endl;

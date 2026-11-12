@@ -37,7 +37,8 @@ E = 0 peak.
 | coincidence tag | the sample tag without the waveform cuts | `coinc_M3-M4_vs_M5-M6_save_M7-M8_a0_r292kV` | `coincidence/saved_coincidences/TAG/` |
 
 `pipeline/run_pipeline.sh NAME --print-tag` prints the sample tag
-(`--print coinc-tag` the coincidence tag, `--print outputs` every output
+(`--print coinc-tag` the coincidence tag, `--print variation` the name of
+its copy in `cutsets/variations/`, see below, `--print outputs` every output
 folder of the cut set). Every run prints both names with
 the tag in words, and writes them to `sample.txt` in the selection and fit
 folders. The light-yield script labels each sample `cut set [tag]`;
@@ -50,6 +51,7 @@ Reading a tag, part by part:
 | Part | Cut-set variable | Example | Meaning |
 |---|---|---|---|
 | `coinc_` … `_vs_` … | `TRIGGER` (or `LEFT/RIGHT_CHANNELS`) | `coinc_M3-M4_vs_M5-M6` | coincidence: the trigger channels of one side vs the other (`default_coinc`, `inverse_coinc` and `custom_coinc` are written by their channels) |
+| `coinc_` … `_<K>of<N>` | `TRIGGER=group_coinc` (`COINC_CHANNELS`, `MIN_COINC_CHANNELS`) | `coinc_M3-M4_3of4` | group coincidence: at least K of the N channels (`all` is written as N of N) |
 | `no_coinc` | `TRIGGER=no_coinc` | `no_coinc` | no coincidence |
 | `save_` | `TRIGGER` (or `SAVE_CHANNELS`), `CHANNELS` for `no_coinc` | `save_M7-M8`, `save_M1-2021`, `save_membrane` | the channels saved and analysed |
 | `w` | `WINDOW_TICKS` | `w20` | coincidence window [ticks], only when not the standard 10 |
@@ -85,12 +87,13 @@ with the same choices share them. Copy
 |---|---|---|
 | `RUN_SET` | all | `reduced` (default, 7 fields) or `full` (22 fields); `--runs` overrides |
 | `TRIGGER` | all | which sample, see the table below |
-| `LEFT_CHANNELS`, `RIGHT_CHANNELS`, `SAVE_CHANNELS` | coincidence | `custom_coinc` only: trigger channels and saved channels (numbers and/or `all`, `cathode`, `membrane`) |
+| `LEFT_CHANNELS`, `RIGHT_CHANNELS`, `SAVE_CHANNELS` | coincidence | `custom_coinc` only: trigger channels and saved channels (numbers and/or `all`, `cathode`, `membrane`); `SAVE_CHANNELS` is also used by `group_coinc` |
+| `COINC_CHANNELS`, `MIN_COINC_CHANNELS` | coincidence | `group_coinc` only: the trigger channels, and how many of them must have a pulse (a number from 1 to their count, or `all`) |
 | `WINDOW_TICKS` | coincidence | coincidence window |
 | `MIN_AMPLITUDE_ADC` | coincidence | minimum amplitude on the trigger channels (keeps amplitude > value, so `0` still drops ≤ 0); `false` = no amplitude cut |
 | `RATE_THRESHOLDS` | coincidence | rate-equalization threshold folder; empty = no rate cut |
 | `INTERVALS` | both | INI with the per-channel windows and an optional `[peak_finder]` section |
-| `MAX_NOISE_ADC` | selection | noise-region amplitude limit |
+| `MAX_NOISE_ADC` | selection | limit on max \|ADC − baseline\| over every tick of the noise region |
 | `MAX_POST_ADC` | selection | post-signal amplitude limit |
 | `MAX_FULL_RANGE_ADC` | selection | full-waveform amplitude limit |
 | `MODULES` | fit | modules to fit; their channels must be saved (`default_coinc` → M7 M8, `inverse_coinc` → M5 M6) |
@@ -105,10 +108,56 @@ with the same choices share them. Copy
 | `default_coinc` | M3+M4 (2030..2041) vs M5+M6 (2050..2061) | M7+M8 (2070..2081) |
 | `inverse_coinc` | M7+M8 (2070..2081) vs M1+M2 (2010..2021) | M5+M6 (2050..2061) |
 | `custom_coinc` | `LEFT_CHANNELS` vs `RIGHT_CHANNELS` | `SAVE_CHANNELS` |
+| `group_coinc` | at least `MIN_COINC_CHANNELS` of `COINC_CHANNELS` | `SAVE_CHANNELS` |
 | `no_coinc` | none | every waveform of `CHANNELS` |
 
 A `custom_coinc` with the channels of one of the two standard layouts is
 run as that layout, so it shares its folders.
+
+`group_coinc` looks for pulses on at least `MIN_COINC_CHANNELS` distinct
+channels of `COINC_CHANNELS` whose latest pulse is at most `WINDOW_TICKS`
+(10 ticks = 160 ns) after the earliest one, t0. Several pulses of one
+channel count once, and the pulses must pass `MIN_AMPLITUDE_ADC`. A
+`SAVE_CHANNELS` waveform is saved when its pulse lies between t0 − 160 ns
+and the group's latest pulse + 160 ns, the same rule as the left/right
+coincidences. In the coincidence CSV, `channel_coincident_left`/`_right`
+and their waveform indices are the group's earliest and latest pulses, and
+two more columns give the group: `n_coincident_channels` and
+`coincident_channels` (for example `2030;2031;2040`).
+
+### Variations: a saved copy per sample
+
+Once a cut set's selection folder holds its selection (made in this run or
+earlier), the pipeline copies the cut set to
+[`cutsets/variations/NAME.env`](cutsets/variations/), with a header naming
+the selection folder. So after editing `workflow_fast.env` for a new
+sample, that sample can still be refitted later without restoring the
+edits:
+
+```bash
+pipeline/run_pipeline.sh variations/coinc_noise500_post2000_full12000 --stages fit,lightyield
+```
+
+`NAME` is the sample tag with the trigger in a word and without the parts
+most samples share (`--print variation` prints it; `--dry-run` saves
+nothing):
+
+| Sample | `NAME` |
+|---|---|
+| M3+M4 vs M5+M6 (`default_coinc`), saving M7+M8 | `coinc_noise500_post2000_full10000` |
+| M7+M8 vs M1+M2 (`inverse_coinc`), saving M5+M6 | `inverse_aux2000_full12000` |
+| either, saving other channels | `coinc_save_C2-C3-C5-C8_noise500_post2000_full9000` |
+| other trigger channels (`custom_coinc`) | `coinc_M1-M2_vs_M5-M6_save_M8_noise500_post2000_full10000` |
+| `group_coinc` (saving M7+M8 unless `_save_` is written) | `group_cathode_14of16_noise500_post2000_full10000` |
+| `no_coinc` | `no_coinc_M8_noise500_post2000_full10000` |
+
+`_a0` and `_r292kV` are dropped; any other window, amplitude, rate,
+intervals, `_n` or `_peak` part stays, so two samples never share a name.
+The copy is written once: when the file exists it is kept with its edits,
+since the same name means the same `[sample]` and `[cuts]` values, and its
+`[fit]` and `[lightyield]` values (`MODULES`, `TEMPLATES`, `FIT_PROPAGATE`,
+`LY_CHANNELS`) are its own. The folder is tracked by git, so the copies can
+be committed and pulled where the data is.
 
 Folders from the previous, hashed tags (`default_coinc_w10_a0_r_292kV_888e6582`)
 are renamed by [`migrate_tags.sh`](migrate_tags.sh) without rerunning
@@ -217,6 +266,7 @@ Caveats:
 | `$PDS_OUTPUT/pipeline/TAG/RUNSET/fit_TEMPLATES/sample.txt`, `cutset.env` | sample tag spelled out, selection folder, templates; the cut set of the last fit and a copy of it |
 | `$PDS_OUTPUT/pipeline/TAG/RUNSET/lightyield/fit_LY_wo_template_chs_*.{png,txt}` | S/S0 vs field, Birks fit, and the numbers behind the figure, per channel list |
 | `$PDS_OUTPUT/pipeline/compare/RUNSET/` | `compare_cutsets.py` figures and efficiency table |
+| `pipeline/cutsets/variations/NAME.env` | a copy of the cut set, saved once its selection exists (see [Variations](#variations-a-saved-copy-per-sample)) |
 
 `fprompt_<ch>_<label>.csv` columns, one row per waveform that passed the cuts
 (written by `plot_wfs_coincidence` and `only_selection`; the first five are

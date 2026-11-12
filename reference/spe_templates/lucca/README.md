@@ -1,7 +1,24 @@
 # lucca templates
 
-SPE templates of M8 (channels 2080 and 2081) built from calibration run **039366**
-with the "Lucca" branch of the template comparison (variant **9C**).
+Single-photoelectron (SPE) templates for M5 through M8. Each template has 1024
+samples in ADC at 16 ns per tick. The suffix `_1` identifies the even channel
+and `_2` the odd channel.
+
+| Module | Calibration run | Channels | Template |
+|---|---|---|---|
+| M5 | 043354 | 2050, 2051 | Tick-wise 1-PE mean minus 0-PE mean, unsmoothed |
+| M6 | 043355 | 2060, 2061 | Tick-wise 1-PE mean minus 0-PE mean, unsmoothed |
+| M7 | 039365 | 2070, 2071 | Archived SPE templates used in the M7 waveform fits |
+| M8 | 039366 | 2080, 2081 | Lucca variant 9C, smoothed in tick pairs |
+
+M5 and M6 use 15 ADC upper cuts before and after the signal and a 12 ADC
+late-pulse veto on the 0-PE sample. The M7 files are the archived templates
+for channels 2070 and 2071.
+
+Per-tick uncertainty files are supplied for M8. The current uncertainty
+sampler assumes the adjacent-pair smoothing of variant 9C.
+
+## M8 files
 
 | File | Channel | Content |
 |---|---|---|
@@ -13,7 +30,7 @@ The `sigma_*` files do not match the template file name pattern, so
 `pds.modules` ignores them. Only `fitting_bertolini_avg.py --propagate-uncertainties`
 reads them.
 
-## How it is built
+## M8 template construction
 
 1. Raw 1024-tick waveforms of run 039366, per channel. Baseline: mode of the
    waveform, then mean of the samples within 8 ADC of the mode.
@@ -38,7 +55,7 @@ Peak ≈ 10.0 ADC (2080) and 9.5 ADC (2081) at tick 264, the same scale as the
 Source code and logbook: `calib/understanding_template/` of sag_analysis
 (`compare_approaches.py`, `SPE_Template_Logbook.tex`), not committed there.
 
-## Fit settings
+## M8 fit settings
 
 `fit_max` = 4.5 µs and t0 ∈ [0.84, 1.04] µs for M8 with this set (`SET_TUNING`
 in `fit/waveform_fits/fitting_bertolini_avg.py`). The francesca values

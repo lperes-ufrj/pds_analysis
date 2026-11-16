@@ -84,9 +84,9 @@ builtin_to_xrootd() {
 to_xrootd() {
     local path=$1 uri
     if [[ -n $PNFS2XROOTD ]]; then
-        uri=$("$PNFS2XROOTD" "$path" | head -n 1 | tr -d '[:space:]')
+        uri=$("$PNFS2XROOTD" "$path" 2>/dev/null | head -n 1 | tr -d '[:space:]') || true
         if [[ $uri != root://* && $uri != roots://* ]]; then
-            echo "Error: pnfs2xrootd returned '$uri' for $path" >&2
+            printf '%s\n' "pnfs2xrootd returned '${uri}'"
             return 1
         fi
         printf '%s\n' "$uri"
@@ -133,13 +133,16 @@ fi
 files_changed=0
 lines_changed=0
 uris_to_check=()
+failures=()   # "list:line_number: path (reason)" for lines left unconverted
 
 for list in "${list_files[@]}"; do
     tmp=$(mktemp "${list}.XXXXXX")
     trap 'rm -f "$tmp"' EXIT
     changed=0
+    line_number=0
 
     while IFS= read -r line || [[ -n $line ]]; do
+        line_number=$((line_number + 1))
         # Trim surrounding whitespace for the test, but write unchanged lines verbatim.
         stripped=${line#"${line%%[![:space:]]*}"}
         stripped=${stripped%"${stripped##*[![:space:]]}"}
@@ -150,7 +153,12 @@ for list in "${list_files[@]}"; do
                 new=$(to_pnfs "$stripped")
             fi
         elif [[ $stripped == /pnfs/* ]]; then
-            new=$(to_xrootd "$stripped")
+            # On failure keep the original line and report it at the end.
+            if ! new=$(to_xrootd "$stripped"); then
+                failures+=("$list:$line_number: $stripped ($new)")
+                echo "  Skipped $list:$line_number ($new)" >&2
+                new=$line
+            fi
         fi
 
         if [[ $new != "$line" ]]; then
@@ -183,6 +191,14 @@ done
 verb=$( ((dry_run)) && echo "would be changed" || echo "changed" )
 echo "----------------------------------------"
 echo "${#list_files[@]} list(s) scanned, $files_changed file(s) / $lines_changed line(s) $verb"
+
+if ((${#failures[@]} > 0)); then
+    echo "----------------------------------------"
+    echo "WARNING: ${#failures[@]} line(s) could not be converted and were left as /pnfs paths:"
+    printf '  %s\n' "${failures[@]}"
+    echo "Check that these files still exist (ls the path) and rerun the script;"
+    echo "lines that are already root:// are skipped, so only these will be retried."
+fi
 
 # ---------------------------------------------------------------------------
 # Optional: verify the URIs resolve

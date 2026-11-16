@@ -381,6 +381,10 @@ std::vector<fs::path> readRootFiles(const fs::path &input_list, const fs::path &
     while (std::getline(input, line)) {
         line = trim(line);
         if (line.empty() || line.front() == '#') continue;
+        if (isRemoteFile(line)) {
+            files.emplace_back(line);
+            continue;
+        }
 
         fs::path path = line;
         if (path.is_relative()) {

@@ -131,6 +131,13 @@ private:
     ) const;
 };
 
+// True for input-list entries that are URLs (root://, roots://, https://, ...)
+// rather than local paths.  These must be passed to ROOT verbatim: they cannot
+// be checked with std::filesystem or joined to the list directory.
+bool isRemoteFile(const std::string &name);
+
+// Opens each file's tree header while building the chain, so an unreachable
+// file or a file without WaveformTree is an error instead of an empty chain.
 std::unique_ptr<TChain> createChain(const std::vector<std::string> &files);
 
 // Waveform quality cuts shared by plot_wfs_coincidence and only_selection.

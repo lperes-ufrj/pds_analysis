@@ -178,6 +178,10 @@ std::vector<std::string> readInputList(const fs::path &input_list)
     while (std::getline(input, line)) {
         line = trim(line);
         if (line.empty() || line.front() == '#') continue;
+        if (isRemoteFile(line)) {
+            files.push_back(line);
+            continue;
+        }
         const fs::path path = fs::weakly_canonical(input_list.parent_path() / line);
         if (!fs::is_regular_file(path)) {
             throw std::runtime_error("ROOT file not found: " + path.string());

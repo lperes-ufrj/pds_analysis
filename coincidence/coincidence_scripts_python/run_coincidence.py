@@ -64,7 +64,7 @@ def read_input_list(input_list):
     for line in input_list.read_text().splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
-            files.append(str((input_list.parent / line).resolve()))
+            files.append(line if "://" in line else str((input_list.parent / line).resolve()))
     return files
 
 def scan_coincidence(

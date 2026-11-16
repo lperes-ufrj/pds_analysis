@@ -356,6 +356,10 @@ std::vector<std::string> readInputList(const fs::path &input_list)
     while (std::getline(input, line)) {
         line = trim(line);
         if (line.empty() || line.front() == '#') continue;
+        if (isRemoteFile(line)) {
+            files.push_back(line);
+            continue;
+        }
         files.push_back(fs::weakly_canonical(input_list.parent_path() / line).string());
     }
     return files;

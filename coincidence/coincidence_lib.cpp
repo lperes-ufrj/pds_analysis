@@ -391,11 +391,18 @@ std::int64_t WaveformAnalyzer::dtNsPulses(
     return time_a - time_b;
 }
 
+bool isRemoteFile(const std::string &name)
+{
+    return name.find("://") != std::string::npos;
+}
+
 std::unique_ptr<TChain> createChain(const std::vector<std::string> &files)
 {
     auto chain = std::make_unique<TChain>("WaveformTree");
     for (const auto &file : files) {
-        if (chain->Add(file.c_str()) == 0) {
+        // nentries = 0 makes TChain open the file now; the default defers the
+        // open and silently yields 0 entries when the file is unreachable.
+        if (chain->Add(file.c_str(), 0) == 0) {
             throw std::runtime_error("Could not add ROOT file to chain: " + file);
         }
     }

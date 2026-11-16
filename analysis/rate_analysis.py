@@ -57,7 +57,7 @@ ROOT.gInterpreter.Declare(
 )
 
 
-def read_input_list(input_list: Path) -> tuple[str, list[Path]]:
+def read_input_list(input_list: Path) -> tuple[str, list[Path | str]]:
     """Read a run input list and resolve all referenced ROOT files."""
     input_list = input_list.expanduser().resolve()
     if not input_list.is_file():
@@ -75,6 +75,10 @@ def read_input_list(input_list: Path) -> tuple[str, list[Path]]:
     for raw_line in input_list.read_text().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
+            continue
+        if "://" in line:
+            # xrootd/remote URL: keep it as a string (Path would collapse "//").
+            files.append(line)
             continue
         listed_path = Path(line).expanduser()
         candidates = [listed_path]
@@ -96,11 +100,12 @@ def read_input_list(input_list: Path) -> tuple[str, list[Path]]:
     return run, files
 
 
-def build_chain(files: list[Path]) -> ROOT.TChain:
+def build_chain(files: list[Path | str]) -> ROOT.TChain:
     """Build and validate a WaveformTree chain from ROOT files."""
     chain = ROOT.TChain("WaveformTree")
     for path in files:
-        if chain.Add(str(path)) == 0:
+        # nentries=0 opens the file now, so an unreachable file fails here.
+        if chain.Add(str(path), 0) == 0:
             raise RuntimeError(f"Could not add ROOT file to chain: {path}")
     if chain.GetEntries() == 0:
         raise RuntimeError("WaveformTree contains no entries")

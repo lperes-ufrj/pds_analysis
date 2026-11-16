@@ -88,6 +88,11 @@ InputData readInputList(const fs::path &argument, const fs::path &repo_dir)
     while (std::getline(stream, raw_line)) {
         const std::string line = trim(raw_line);
         if (line.empty() || line.front() == '#') continue;
+        if (line.find("://") != std::string::npos) {
+            // xrootd/remote URL: hand it to ROOT verbatim.
+            input.files.emplace_back(line);
+            continue;
+        }
 
         const fs::path listed(line);
         std::vector<fs::path> candidates;
